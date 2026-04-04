@@ -1,0 +1,41 @@
+# Stage 1: Build
+FROM node:22-alpine AS builder
+RUN corepack enable && corepack prepare pnpm@latest --activate
+WORKDIR /app
+
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc ./
+COPY packages/types/package.json packages/types/
+COPY packages/hex-math/package.json packages/hex-math/
+COPY packages/game-engine/package.json packages/game-engine/
+COPY apps/api/package.json apps/api/
+RUN pnpm install --frozen-lockfile
+
+COPY packages/ packages/
+COPY apps/api/ apps/api/
+
+RUN pnpm --filter @hexawords/types build && \
+    pnpm --filter @hexawords/hex-math build && \
+    pnpm --filter @hexawords/game-engine build && \
+    cd apps/api && npx prisma generate --schema=src/prisma/schema.prisma && \
+    npx nest build
+
+# Stage 2: Production
+FROM node:22-alpine
+RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN addgroup -g 1001 -S app && adduser -S app -u 1001
+WORKDIR /app
+
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages/types/dist ./packages/types/dist
+COPY --from=builder /app/packages/types/package.json ./packages/types/
+COPY --from=builder /app/packages/hex-math/dist ./packages/hex-math/dist
+COPY --from=builder /app/packages/hex-math/package.json ./packages/hex-math/
+COPY --from=builder /app/packages/game-engine/dist ./packages/game-engine/dist
+COPY --from=builder /app/packages/game-engine/package.json ./packages/game-engine/
+COPY --from=builder /app/apps/api/dist ./apps/api/dist
+COPY --from=builder /app/apps/api/package.json ./apps/api/
+COPY --from=builder /app/apps/api/src/prisma ./apps/api/src/prisma
+
+USER app
+EXPOSE 3000
+CMD ["node", "apps/api/dist/main.js"]

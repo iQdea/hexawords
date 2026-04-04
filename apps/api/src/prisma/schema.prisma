@@ -1,0 +1,167 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── AUTH ────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  region    String   @default("ru") @db.VarChar(8)
+
+  profile     UserProfile?
+  auth        UserAuth?
+  games       Game[]
+  scores      UserScore[]
+  wordHistory UserWordHistory[]
+
+  @@map("users")
+}
+
+model UserProfile {
+  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String  @unique @map("user_id") @db.Uuid
+  nickname  String  @default("Игрок") @db.VarChar(32)
+  avatarUrl String? @map("avatar_url") @db.VarChar(256)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
+
+model UserAuth {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String       @unique @map("user_id") @db.Uuid
+  email        String?      @unique @db.VarChar(255)
+  passwordHash String?      @map("password_hash") @db.VarChar(255)
+  provider     AuthProvider @default(ANONYMOUS)
+  isVerified   Boolean      @default(false) @map("is_verified")
+  refreshToken String?      @map("refresh_token") @db.VarChar(512)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_auth")
+}
+
+enum AuthProvider {
+  EMAIL_PASSWORD
+  PASSWORDLESS
+  ANONYMOUS
+}
+
+// ─── GAME ────────────────────────────────────────────
+
+model Game {
+  id         String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String          @map("user_id") @db.Uuid
+  mode       GameMode
+  complexity GameComplexity?
+  level      Int?
+  status     GameStatus      @default(ACTIVE)
+  score      Int             @default(0)
+  wordCount  Int             @default(0) @map("word_count")
+  hexCount   Int             @map("hex_count")
+  cellsPerHex Int            @default(7) @map("cells_per_hex")
+  createdAt  DateTime        @default(now()) @map("created_at")
+  finishedAt DateTime?       @map("finished_at")
+
+  user  User       @relation(fields: [userId], references: [id])
+  cells Cell[]
+  words GameWord[]
+
+  @@index([userId, mode, status])
+  @@map("games")
+}
+
+enum GameMode {
+  SINGLE
+  CAMPAIGN
+}
+
+enum GameComplexity {
+  EASY
+  MIDDLE
+  HARD
+  CRAZY
+}
+
+enum GameStatus {
+  ACTIVE
+  FINISHED
+  ABANDONED
+}
+
+model Cell {
+  id       String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  gameId   String  @map("game_id") @db.Uuid
+  hexQ     Int     @map("hex_q")
+  hexR     Int     @map("hex_r")
+  slot     Int                          // 0-6, position within the hexagon
+  char     String  @db.VarChar(2)
+  points   Int     @default(0)
+  isActive Boolean @default(true) @map("is_active")
+
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([gameId, hexQ, hexR, slot])
+  @@index([gameId, isActive])
+  @@map("cells")
+}
+
+model GameWord {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  gameId    String   @map("game_id") @db.Uuid
+  word      String   @db.VarChar(64)
+  points    Int
+  cellPath  Json     @map("cell_path")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@index([gameId])
+  @@map("game_words")
+}
+
+// ─── DICTIONARY ──────────────────────────────────────
+
+model Word {
+  word String @id @db.VarChar(64)
+  freq Int    @default(0)
+  len  Int
+
+  @@index([len])
+  @@map("words")
+}
+
+// ─── SCORES & STATS ──────────────────────────────────
+
+model UserScore {
+  id     String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  gameId String @unique @map("game_id") @db.Uuid
+  points Int    @default(0)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, points(sort: Desc)])
+  @@map("user_scores")
+}
+
+model UserWordHistory {
+  id        String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String          @map("user_id") @db.Uuid
+  word      String          @db.VarChar(64)
+  points    Int
+  mode      GameMode
+  createdAt DateTime        @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, points(sort: Desc)])
+  @@map("user_word_history")
+}
