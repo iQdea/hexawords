@@ -125,7 +125,8 @@ describe('Hexawords API (e2e)', () => {
         .expect(201);
 
       expect(res.body.id).toBeDefined();
-      expect(res.body.cells).toHaveLength(7);
+      expect(res.body.hexagons).toHaveLength(4); // hard = 4 hexagons
+      expect(res.body.hexagons[0].cells).toHaveLength(7); // 7 letters each
       expect(res.body.status).toBe('active');
       gameId = res.body.id;
     });
@@ -137,7 +138,7 @@ describe('Hexawords API (e2e)', () => {
         .expect(200);
 
       expect(res.body.id).toBe(gameId);
-      expect(res.body.cells).toHaveLength(7);
+      expect(res.body.hexagons).toHaveLength(4);
     });
 
     it('POST /games/:id/submit-word rejects too short', async () => {
@@ -145,11 +146,11 @@ describe('Hexawords API (e2e)', () => {
         .get(`/games/${gameId}`)
         .set('Cookie', cookies);
 
-      const cells = game.body.cells.slice(0, 2);
+      const hex = game.body.hexagons[0];
       const res = await request(app.getHttpServer())
         .post(`/games/${gameId}/submit-word`)
         .set('Cookie', cookies)
-        .send({ cellPath: cells.map((c: any) => ({ q: c.q, r: c.r })) })
+        .send({ path: [{ hexQ: hex.q, hexR: hex.r, slot: 0 }] })
         .expect(201);
 
       expect(res.body.valid).toBe(false);
@@ -163,7 +164,7 @@ describe('Hexawords API (e2e)', () => {
         .send({ mode: 'campaign', level: 1 })
         .expect(201);
 
-      expect(res.body.cells).toHaveLength(4);
+      expect(res.body.hexagons).toHaveLength(3); // level 1 = 3 hexagons
     });
 
     it('GET /games/campaign/progress returns progress', async () => {
