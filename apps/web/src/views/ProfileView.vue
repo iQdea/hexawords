@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { useApi } from '../composables/useApi';
-import { useAuthStore } from '../stores/auth';
+import { useApi } from '@/composables/useApi';
+import { useAuthStore } from '@/stores/auth';
 
 const api = useApi();
 const auth = useAuthStore();
@@ -16,9 +16,9 @@ const nickname = ref('');
 onMounted(async () => {
   try {
     const [p, s, w] = await Promise.all([
-      api.get<any>('/user/profile'),
-      api.get<any>('/user/stats'),
-      api.get<any>('/user/words?limit=30'),
+      api.get<typeof profile.value>('/user/profile'),
+      api.get<typeof stats.value>('/user/stats'),
+      api.get<{ words: typeof words.value; total: number }>('/user/words?limit=30'),
     ]);
     profile.value = p;
     stats.value = s;
@@ -35,7 +35,7 @@ async function saveNickname() {
   if (!nickname.value.trim() || saving.value) return;
   saving.value = true;
   try {
-    const updated = await api.patch<any>('/user/profile', { nickname: nickname.value.trim() });
+    const updated = await api.patch<typeof profile.value>('/user/profile', { nickname: nickname.value.trim() });
     profile.value = updated;
   } finally {
     saving.value = false;

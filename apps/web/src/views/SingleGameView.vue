@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { useGameStore } from '../stores/game';
+import { useGameStore } from '@/stores/game';
 import { GameComplexity } from '@hexawords/types';
-import GameBoard from '../components/game/GameBoard.vue';
+import GameBoard from '@/components/game/GameBoard.vue';
 
 const router = useRouter();
 const game = useGameStore();
@@ -23,9 +23,9 @@ async function start(c: GameComplexity) {
   loading.value = true;
   errorMsg.value = '';
   try {
-    await game.startGame('single' as any, c);
-  } catch (e: any) {
-    errorMsg.value = e.message ?? 'Ошибка создания игры';
+    await game.startGame('single', c);
+  } catch (e: unknown) {
+    errorMsg.value = e instanceof Error ? e.message : 'Ошибка создания игры';
   } finally {
     loading.value = false;
   }

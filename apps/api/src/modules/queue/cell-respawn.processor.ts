@@ -1,7 +1,9 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
+import { Inject, Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Pool } from 'pg';
+import { PG_POOL, GameStatus } from '../../database';
+import type { CellRow } from '../../database';
 import { SocketService } from '../socket/socket.service';
 import { WeightedLetterGenerator, shouldRespawnVowel, RUSSIAN_VOWELS } from '@hexawords/game-engine';
 import type { CellRespawnJobData } from './cell-respawn.service';
@@ -12,7 +14,7 @@ export class CellRespawnProcessor extends WorkerHost {
   private gen = new WeightedLetterGenerator();
 
   constructor(
-    private prisma: PrismaService,
+    @Inject(PG_POOL) private pool: Pool,
     private socketService: SocketService,
   ) {
     super();
@@ -21,63 +23,62 @@ export class CellRespawnProcessor extends WorkerHost {
   async process(job: Job<CellRespawnJobData>) {
     const { gameId, userId, cells } = job.data;
 
+    const client = await this.pool.connect();
     try {
-      const updatedCells = await this.prisma.$transaction(async (tx) => {
-        const game = await tx.game.findUnique({ where: { id: gameId } });
-        if (!game || game.status !== 'ACTIVE') return [];
+      await client.query('BEGIN');
 
-        const result = [];
-        for (const coord of cells) {
-          // Get current hex cells to check vowel balance
-          const hexCells = await tx.cell.findMany({
-            where: { gameId, hexQ: coord.q, hexR: coord.r, isActive: true },
-            select: { char: true, slot: true },
-          });
+      const { rows: [game] } = await client.query<{ id: string; status: string }>(
+        'SELECT id, status FROM games WHERE id = $1', [gameId],
+      );
+      if (!game || game.status !== GameStatus.ACTIVE) {
+        await client.query('ROLLBACK');
+        return;
+      }
 
-          const vowelCount = hexCells.filter(
-            c => c.slot !== coord.slot && RUSSIAN_VOWELS.has(c.char)
-          ).length;
-          const activeCount = hexCells.filter(c => c.slot !== coord.slot).length;
+      const updatedCells = [];
+      for (const coord of cells) {
+        const { rows: hexCells } = await client.query<{ char: string; slot: number }>(
+          'SELECT char, slot FROM cells WHERE game_id = $1 AND hex_q = $2 AND hex_r = $3 AND is_active = true',
+          [gameId, coord.q, coord.r],
+        );
 
-          const needVowel = shouldRespawnVowel(vowelCount, activeCount);
-          const { char, points } = needVowel
-            ? this.gen.generateVowel()
-            : this.gen.generateConsonant();
+        const vowelCount = hexCells.filter(c => c.slot !== coord.slot && RUSSIAN_VOWELS.has(c.char)).length;
+        const activeCount = hexCells.filter(c => c.slot !== coord.slot).length;
 
-          const cell = await tx.cell.update({
-            where: {
-              gameId_hexQ_hexR_slot: {
-                gameId,
-                hexQ: coord.q,
-                hexR: coord.r,
-                slot: coord.slot,
-              },
-            },
-            data: { char, points, isActive: true },
-          });
+        const needVowel = shouldRespawnVowel(vowelCount, activeCount);
+        const { char, points } = needVowel ? this.gen.generateVowel() : this.gen.generateConsonant();
 
-          result.push({
+        const { rows: [cell] } = await client.query<CellRow>(
+          `UPDATE cells SET char = $1, points = $2, is_active = true
+           WHERE game_id = $3 AND hex_q = $4 AND hex_r = $5 AND slot = $6
+           RETURNING id, hex_q, hex_r, slot, char, points`,
+          [char, points, gameId, coord.q, coord.r, coord.slot],
+        );
+
+        if (cell) {
+          updatedCells.push({
             id: cell.id,
-            hexQ: cell.hexQ,
-            hexR: cell.hexR,
+            hexQ: cell.hex_q,
+            hexR: cell.hex_r,
             slot: cell.slot,
             char: cell.char,
             points: cell.points,
             isActive: true,
           });
         }
-        return result;
-      });
+      }
+
+      await client.query('COMMIT');
 
       if (updatedCells.length > 0) {
-        this.socketService.sendToUser(userId, 'cell:respawned', {
-          gameId,
-          cells: updatedCells,
-        });
+        this.socketService.sendToUser(userId, 'cell:respawned', { gameId, cells: updatedCells });
       }
     } catch (err) {
+      await client.query('ROLLBACK');
       this.logger.error(`Cell respawn failed for game ${gameId}`, err);
       throw err;
+    } finally {
+      client.release();
     }
   }
 }

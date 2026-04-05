@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, watch, onUnmounted } from 'vue';
-import { useGameStore } from '../../stores/game';
-import { useSocket } from '../../composables/useSocket';
-import { useApi } from '../../composables/useApi';
-import HexGrid from '../hex/HexGrid.vue';
+import { useGameStore } from '@/stores/game';
+import { useSocket } from '@/composables/useSocket';
+import { useApi } from '@/composables/useApi';
+import HexGrid from '@/components/hex/HexGrid.vue';
 
 const game = useGameStore();
 const socket = useSocket();
@@ -17,7 +17,7 @@ async function handleReset() {
   if (!game.gameId) return;
   resetting.value = true;
   try {
-    const data = await api.post<any>(`/games/${game.gameId}/reset`, {});
+    const data = await api.post<{ score: number; wordCount: number; hexagons: typeof game.hexagons }>(`/games/${game.gameId}/reset`, {});
     game.score = data.score;
     game.wordCount = data.wordCount;
     game.hexagons = data.hexagons;
@@ -25,8 +25,8 @@ async function handleReset() {
     game.lastWordPoints = 0;
     game.error = null;
     game.clearSelection();
-  } catch (e: any) {
-    game.error = e.message;
+  } catch (e: unknown) {
+    game.error = e instanceof Error ? e.message : 'Ошибка';
     foundWords.value = [];
   } finally {
     resetting.value = false;
@@ -47,7 +47,7 @@ watch(() => game.gameId, (id) => {
 
 socket.onCellsRespawned((data) => {
   if (data.gameId !== game.gameId) return;
-  game.handleCellRespawn(data.cells as any);
+  game.handleCellRespawn(data.cells);
 });
 
 socket.onScoreUpdate((data) => {

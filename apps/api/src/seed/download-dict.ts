@@ -2,7 +2,7 @@
  * Downloads the Russian dictionary from the old hexawords-ts repo
  * and converts it to a JSON file for seeding.
  *
- * Usage: npx ts-node src/prisma/seed/download-dict.ts
+ * Usage: npx ts-node src/seed/download-dict.ts
  */
 import * as fs from 'fs';
 import * as path from 'path';

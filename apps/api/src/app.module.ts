@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { PrismaModule } from './prisma/prisma.module';
+import { DatabaseModule } from './database';
 import { GameModule } from './modules/game/game.module';
 import { DictionaryModule } from './modules/dictionary/dictionary.module';
 import { SocketModule } from './modules/socket/socket.module';
@@ -12,7 +12,7 @@ import { AppController } from './app.controller';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    PrismaModule,
+    DatabaseModule,
     AuthModule,
     DictionaryModule,
     GameModule,

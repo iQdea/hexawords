@@ -11,16 +11,18 @@ import type {
 
 const SOCKET_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
-let socket: Socket | null = null;
+type TypedSocket = Socket<ServerToClientEvents>;
+
+let socket: TypedSocket | null = null;
 const connected = ref(false);
 
-function getSocket(): Socket {
+function getSocket(): TypedSocket {
   if (!socket) {
     socket = io(SOCKET_URL, {
       transports: ['websocket'],
       query: { userId: getUserId() },
       autoConnect: false,
-    });
+    }) as TypedSocket;
 
     socket.on('connect', () => {
       connected.value = true;
@@ -49,23 +51,23 @@ export function useSocket() {
   }
 
   function onCellsRespawned(cb: (data: CellsRespawnedEvent) => void) {
-    s.on('cell:respawned', cb as any);
-    onUnmounted(() => s.off('cell:respawned', cb as any));
+    s.on('cell:respawned', cb);
+    onUnmounted(() => s.off('cell:respawned', cb));
   }
 
   function onScoreUpdate(cb: (data: ScoreUpdateEvent) => void) {
-    s.on('score:update', cb as any);
-    onUnmounted(() => s.off('score:update', cb as any));
+    s.on('score:update', cb);
+    onUnmounted(() => s.off('score:update', cb));
   }
 
   function onWordInvalid(cb: (data: WordInvalidEvent) => void) {
-    s.on('word:invalid', cb as any);
-    onUnmounted(() => s.off('word:invalid', cb as any));
+    s.on('word:invalid', cb);
+    onUnmounted(() => s.off('word:invalid', cb));
   }
 
   function onGameFinished(cb: (data: GameFinishedEvent) => void) {
-    s.on('game:finished', cb as any);
-    onUnmounted(() => s.off('game:finished', cb as any));
+    s.on('game:finished', cb);
+    onUnmounted(() => s.off('game:finished', cb));
   }
 
   return {

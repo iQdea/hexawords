@@ -1,7 +1,9 @@
-import { Injectable, BadRequestException, UnauthorizedException } from '@nestjs/common';
+import { Inject, Injectable, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Pool } from 'pg';
+import { PG_POOL, AuthProvider } from '../../database';
+import type { UserAuthRow } from '../../database';
 import * as bcrypt from 'bcrypt';
 import type { Response } from 'express';
 
@@ -13,95 +15,117 @@ export interface TokenPayload {
 @Injectable()
 export class AuthService {
   constructor(
-    private prisma: PrismaService,
+    @Inject(PG_POOL) private pool: Pool,
     private jwt: JwtService,
     private config: ConfigService,
   ) {}
 
-  /** Create anonymous user and return JWT tokens. */
   async createAnonymousUser() {
-    const user = await this.prisma.user.create({
-      data: {
-        profile: { create: { nickname: 'Игрок' } },
-        auth: { create: { provider: 'ANONYMOUS' } },
-      },
-    });
-
-    return this.issueTokens(user.id, 'anonymous');
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: [user] } = await client.query<{ id: string }>('INSERT INTO users DEFAULT VALUES RETURNING id');
+      await client.query('INSERT INTO user_profiles (user_id, nickname) VALUES ($1, $2)', [user.id, 'Игрок']);
+      await client.query('INSERT INTO user_auth (user_id, provider) VALUES ($1, $2)', [user.id, AuthProvider.ANONYMOUS]);
+      await client.query('COMMIT');
+      return this.issueTokens(user.id, 'anonymous');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
-  /** Register with email + password. */
   async signUp(email: string, password: string, nickname?: string) {
-    const existing = await this.prisma.userAuth.findFirst({ where: { email } });
-    if (existing) throw new BadRequestException('Email уже зарегистрирован');
+    const { rows } = await this.pool.query<{ id: string }>('SELECT id FROM user_auth WHERE email = $1', [email]);
+    if (rows.length > 0) throw new BadRequestException('Email уже зарегистрирован');
 
     if (password.length < 6) throw new BadRequestException('Пароль должен быть не менее 6 символов');
 
     const passwordHash = await bcrypt.hash(password, 12);
 
-    const user = await this.prisma.user.create({
-      data: {
-        profile: { create: { nickname: nickname || 'Игрок' } },
-        auth: { create: { email, passwordHash, provider: 'EMAIL_PASSWORD', isVerified: true } },
-      },
-    });
-
-    return this.issueTokens(user.id, 'customer');
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: [user] } = await client.query<{ id: string }>('INSERT INTO users DEFAULT VALUES RETURNING id');
+      await client.query('INSERT INTO user_profiles (user_id, nickname) VALUES ($1, $2)', [user.id, nickname || 'Игрок']);
+      await client.query(
+        'INSERT INTO user_auth (user_id, email, password_hash, provider, is_verified) VALUES ($1, $2, $3, $4, $5)',
+        [user.id, email, passwordHash, AuthProvider.EMAIL_PASSWORD, true],
+      );
+      await client.query('COMMIT');
+      return this.issueTokens(user.id, 'customer');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
-  /** Sign in with email + password. */
   async signIn(email: string, password: string) {
-    const auth = await this.prisma.userAuth.findFirst({
-      where: { email, provider: 'EMAIL_PASSWORD' },
-    });
+    const { rows } = await this.pool.query<UserAuthRow>(
+      'SELECT * FROM user_auth WHERE email = $1 AND provider = $2',
+      [email, AuthProvider.EMAIL_PASSWORD],
+    );
+    const auth = rows[0];
 
-    if (!auth || !auth.passwordHash) {
+    if (!auth || !auth.password_hash) {
       throw new UnauthorizedException('Неверный email или пароль');
     }
 
-    const valid = await bcrypt.compare(password, auth.passwordHash);
+    const valid = await bcrypt.compare(password, auth.password_hash);
     if (!valid) {
       throw new UnauthorizedException('Неверный email или пароль');
     }
 
-    return this.issueTokens(auth.userId, 'customer');
+    return this.issueTokens(auth.user_id, 'customer');
   }
 
-  /** Upgrade anonymous account to email+password. Preserves all game data. */
   async upgradeAnonymous(userId: string, email: string, password: string, nickname?: string) {
-    const auth = await this.prisma.userAuth.findUnique({ where: { userId } });
-    if (!auth) throw new BadRequestException('Пользователь не найден');
-    if (auth.provider !== 'ANONYMOUS') throw new BadRequestException('Аккаунт уже привязан');
+    const { rows } = await this.pool.query<{ provider: AuthProvider }>(
+      'SELECT provider FROM user_auth WHERE user_id = $1', [userId],
+    );
+    if (rows.length === 0) throw new BadRequestException('Пользователь не найден');
+    if (rows[0].provider !== AuthProvider.ANONYMOUS) throw new BadRequestException('Аккаунт уже привязан');
 
-    const existing = await this.prisma.userAuth.findFirst({ where: { email } });
-    if (existing) throw new BadRequestException('Email уже зарегистрирован');
+    const { rows: existing } = await this.pool.query('SELECT id FROM user_auth WHERE email = $1', [email]);
+    if (existing.length > 0) throw new BadRequestException('Email уже зарегистрирован');
 
     if (password.length < 6) throw new BadRequestException('Пароль должен быть не менее 6 символов');
 
     const passwordHash = await bcrypt.hash(password, 12);
 
-    await this.prisma.$transaction([
-      this.prisma.userAuth.update({
-        where: { userId },
-        data: { email, passwordHash, provider: 'EMAIL_PASSWORD', isVerified: true },
-      }),
-      ...(nickname
-        ? [this.prisma.userProfile.update({ where: { userId }, data: { nickname } })]
-        : []),
-    ]);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        'UPDATE user_auth SET email = $1, password_hash = $2, provider = $3, is_verified = $4 WHERE user_id = $5',
+        [email, passwordHash, AuthProvider.EMAIL_PASSWORD, true, userId],
+      );
+      if (nickname) {
+        await client.query('UPDATE user_profiles SET nickname = $1 WHERE user_id = $2', [nickname, userId]);
+      }
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
 
     return this.issueTokens(userId, 'customer');
   }
 
-  /** Refresh tokens. */
   async refreshTokens(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: { auth: { select: { provider: true } } },
-    });
-    if (!user) throw new Error('User not found');
+    const { rows } = await this.pool.query<{ id: string; provider: AuthProvider }>(
+      'SELECT u.id, a.provider FROM users u INNER JOIN user_auth a ON a.user_id = u.id WHERE u.id = $1',
+      [userId],
+    );
+    if (rows.length === 0) throw new Error('User not found');
 
-    const role = user.auth?.provider === 'EMAIL_PASSWORD' ? 'customer' : 'anonymous';
+    const role = rows[0].provider === AuthProvider.EMAIL_PASSWORD ? 'customer' : 'anonymous';
     return this.issueTokens(userId, role);
   }
 
@@ -112,33 +136,15 @@ export class AuthService {
       expiresIn: this.config.get('JWT_REFRESH_EXPIRATION', '7d'),
     });
 
-    await this.prisma.userAuth.update({
-      where: { userId },
-      data: { refreshToken },
-    });
+    await this.pool.query('UPDATE user_auth SET refresh_token = $1 WHERE user_id = $2', [refreshToken, userId]);
 
     return { userId, accessToken, refreshToken };
   }
 
-  /** Set JWT cookies on response. */
   setTokenCookies(res: Response, accessToken: string, refreshToken: string) {
     const isProduction = this.config.get('NODE_ENV') === 'production';
-
-    res.cookie('access_token', accessToken, {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: 'lax',
-      maxAge: 15 * 60 * 1000,
-      path: '/',
-    });
-
-    res.cookie('refresh_token', refreshToken, {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-      path: '/',
-    });
+    res.cookie('access_token', accessToken, { httpOnly: true, secure: isProduction, sameSite: 'lax', maxAge: 15 * 60 * 1000, path: '/' });
+    res.cookie('refresh_token', refreshToken, { httpOnly: true, secure: isProduction, sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000, path: '/' });
   }
 
   clearTokenCookies(res: Response) {

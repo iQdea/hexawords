@@ -1,7 +1,8 @@
 import { Controller, Post, Get, Body, Req, Res, UseGuards } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { AuthService } from './auth.service';
 import type { Request, Response } from 'express';
+import type { AuthenticatedRequest } from '../../common/types';
 
 @Controller('auth')
 export class AuthController {
@@ -42,13 +43,13 @@ export class AuthController {
   }
 
   @Post('upgrade')
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   async upgrade(
     @Req() req: Request,
     @Body() body: { email: string; password: string; nickname?: string },
     @Res({ passthrough: true }) res: Response,
   ) {
-    const userId = (req as any).user.userId;
+    const userId = (req as AuthenticatedRequest).user.userId;
     const { accessToken, refreshToken } = await this.authService.upgradeAnonymous(
       userId,
       body.email,
@@ -60,9 +61,9 @@ export class AuthController {
   }
 
   @Get('me')
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   me(@Req() req: Request) {
-    return (req as any).user;
+    return (req as AuthenticatedRequest).user;
   }
 
   @Post('refresh')

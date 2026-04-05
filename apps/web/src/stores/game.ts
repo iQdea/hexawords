@@ -3,7 +3,7 @@ import { ref, computed } from 'vue';
 import { areAdjacent } from '@hexawords/hex-math';
 import type { CellDTO, HexagonDTO, WordPathStep } from '@hexawords/types';
 import { CAMPAIGN_LEVELS } from '@hexawords/types';
-import { useApi } from '../composables/useApi';
+import { useApi } from '@/composables/useApi';
 
 interface GameResponse {
   id: string;
@@ -122,7 +122,7 @@ export const useGameStore = defineStore('game', () => {
 
     error.value = null;
     try {
-      const result = await api.post<any>(`/games/${gameId.value}/submit-word`, {
+      const result = await api.post<{ valid: boolean; word: string; points?: number; reason?: string; consumedCells?: Array<{ hexQ: number; hexR: number; slot: number }>; totalScore?: number; campaignComplete?: boolean }>(`/games/${gameId.value}/submit-word`, {
         path: selectedPath.value,
       });
 
@@ -144,8 +144,8 @@ export const useGameStore = defineStore('game', () => {
       } else {
         error.value = translateReason(result.reason);
       }
-    } catch (e: any) {
-      error.value = e.message;
+    } catch (e: unknown) {
+      error.value = e instanceof Error ? e.message : 'Ошибка';
     }
 
     selectedPath.value = [];

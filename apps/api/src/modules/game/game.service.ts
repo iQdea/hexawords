@@ -1,9 +1,12 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Inject, Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Pool } from 'pg';
+import { PG_POOL, GameMode, GameComplexity, GameStatus, AuthProvider } from '../../database';
+import type { GameRow, CellRow } from '../../database';
 import { DictionaryService } from '../dictionary/dictionary.service';
 import { SocketService } from '../socket/socket.service';
 import { CellRespawnService } from '../queue/cell-respawn.service';
 import { GameEngine, WeightedLetterGenerator } from '@hexawords/game-engine';
+import type { GameState } from '@hexawords/game-engine';
 import { gridForSize } from '@hexawords/hex-math';
 import {
   GameMode as GameModeEnum,
@@ -13,29 +16,35 @@ import {
   CAMPAIGN_LEVELS,
 } from '@hexawords/types';
 import type { WordPathStep } from '@hexawords/types';
-import { GameMode, GameComplexity, GameStatus } from '@prisma/client';
 
 @Injectable()
 export class GameService {
   private letterGenerator = new WeightedLetterGenerator();
 
   constructor(
-    private prisma: PrismaService,
+    @Inject(PG_POOL) private pool: Pool,
     private dictionary: DictionaryService,
     private socketService: SocketService,
     private cellRespawnService: CellRespawnService,
   ) {}
 
   private async ensureUser(userId: string) {
-    const existing = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (existing) return existing;
-    return this.prisma.user.create({
-      data: {
-        id: userId,
-        profile: { create: { nickname: 'Игрок' } },
-        auth: { create: { provider: 'ANONYMOUS' } },
-      },
-    });
+    const { rows } = await this.pool.query('SELECT id FROM users WHERE id = $1', [userId]);
+    if (rows.length > 0) return;
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('INSERT INTO users (id) VALUES ($1)', [userId]);
+      await client.query('INSERT INTO user_profiles (user_id, nickname) VALUES ($1, $2)', [userId, 'Игрок']);
+      await client.query('INSERT INTO user_auth (user_id, provider) VALUES ($1, $2)', [userId, AuthProvider.ANONYMOUS]);
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   private createEngine(): GameEngine {
@@ -62,18 +71,24 @@ export class GameService {
     }
 
     // Check for existing active game
-    const existing = await this.prisma.game.findFirst({
-      where: {
-        userId,
-        mode: mode.toUpperCase() as GameMode,
-        status: GameStatus.ACTIVE,
-        ...(mode === GameModeEnum.CAMPAIGN ? { level } : { complexity: complexity?.toUpperCase() as GameComplexity }),
-      },
-      include: { cells: true },
-    });
+    const modeUpper = mode.toUpperCase() as GameMode;
+    let existingQuery: string;
+    let existingParams: (string | number | null | undefined)[];
 
-    if (existing) {
-      return this.formatGameResponse(existing, existing.cells);
+    if (mode === GameModeEnum.CAMPAIGN) {
+      existingQuery = 'SELECT * FROM games WHERE user_id = $1 AND mode = $2 AND status = $3 AND level = $4';
+      existingParams = [userId, modeUpper, GameStatus.ACTIVE, level];
+    } else {
+      existingQuery = 'SELECT * FROM games WHERE user_id = $1 AND mode = $2 AND status = $3 AND complexity = $4';
+      existingParams = [userId, modeUpper, GameStatus.ACTIVE, complexity!.toUpperCase()];
+    }
+
+    const { rows: existingGames } = await this.pool.query<GameRow>(existingQuery, existingParams);
+
+    if (existingGames.length > 0) {
+      const game = existingGames[0];
+      const { rows: cells } = await this.pool.query<CellRow>('SELECT * FROM cells WHERE game_id = $1', [game.id]);
+      return this.formatGameResponse(game, cells);
     }
 
     // Generate new game
@@ -81,84 +96,90 @@ export class GameService {
     const state = engine.createInitialState({ mode, hexCount, cellsPerHex: CELLS_PER_HEX });
     const hexCoords = gridForSize(hexCount);
 
-    const game = await this.prisma.$transaction(async (tx) => {
-      const game = await tx.game.create({
-        data: {
-          userId,
-          mode: mode.toUpperCase() as GameMode,
-          complexity: complexity ? complexity.toUpperCase() as GameComplexity : null,
-          level: level ?? null,
-          hexCount,
-          cellsPerHex: CELLS_PER_HEX,
-        },
-      });
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
 
-      const cellData: Array<{ gameId: string; hexQ: number; hexR: number; slot: number; char: string; points: number }> = [];
+      const { rows: [game] } = await client.query<GameRow>(
+        `INSERT INTO games (user_id, mode, complexity, level, hex_count, cells_per_hex)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [userId, modeUpper, complexity ? complexity.toString().toUpperCase() : null, level ?? null, hexCount, CELLS_PER_HEX],
+      );
+
+      // Build cell values
+      const cellValues: (string | number)[] = [];
+      const placeholders: string[] = [];
+      let idx = 1;
       for (const coord of hexCoords) {
         const hexCells = state.hexagons.get(`${coord.q},${coord.r}`);
         if (!hexCells) continue;
         for (const cell of hexCells) {
-          cellData.push({
-            gameId: game.id,
-            hexQ: coord.q,
-            hexR: coord.r,
-            slot: cell.slot,
-            char: cell.char,
-            points: cell.points,
-          });
+          placeholders.push(`($${idx}, $${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4}, $${idx + 5})`);
+          cellValues.push(game.id, coord.q, coord.r, cell.slot, cell.char, cell.points);
+          idx += 6;
         }
       }
 
-      await tx.cell.createMany({ data: cellData });
-      const cells = await tx.cell.findMany({ where: { gameId: game.id } });
-      return { ...game, cells };
-    });
+      await client.query(
+        `INSERT INTO cells (game_id, hex_q, hex_r, slot, char, points) VALUES ${placeholders.join(', ')}`,
+        cellValues,
+      );
 
-    return this.formatGameResponse(game, game.cells);
+      const { rows: cells } = await client.query<CellRow>('SELECT * FROM cells WHERE game_id = $1', [game.id]);
+
+      await client.query('COMMIT');
+      return this.formatGameResponse(game, cells);
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   async submitWord(userId: string, gameId: string, path: WordPathStep[]) {
-    const txResult = await this.prisma.$transaction(async (tx) => {
-      const game = await tx.game.findFirst({
-        where: { id: gameId, userId, status: GameStatus.ACTIVE },
-        include: { cells: true },
-      });
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
 
+      const { rows: [game] } = await client.query<GameRow>(
+        'SELECT * FROM games WHERE id = $1 AND user_id = $2 AND status = $3',
+        [gameId, userId, GameStatus.ACTIVE],
+      );
       if (!game) throw new NotFoundException('Active game not found');
 
-      // Build engine state from DB
-      const hexagons = new Map<string, any[]>();
-      for (const cell of game.cells) {
-        const key = `${cell.hexQ},${cell.hexR}`;
+      const { rows: dbCells } = await client.query<CellRow>('SELECT * FROM cells WHERE game_id = $1', [gameId]);
+
+      // Build engine state
+      const hexagons = new Map<string, { id?: string; hexQ: number; hexR: number; slot: number; char: string; points: number; isActive: boolean }[]>();
+      for (const cell of dbCells) {
+        const key = `${cell.hex_q},${cell.hex_r}`;
         if (!hexagons.has(key)) hexagons.set(key, []);
         hexagons.get(key)!.push({
-          hexQ: cell.hexQ,
-          hexR: cell.hexR,
+          hexQ: cell.hex_q,
+          hexR: cell.hex_r,
           slot: cell.slot,
           char: cell.char,
           points: cell.points,
-          isActive: cell.isActive,
+          isActive: cell.is_active,
         });
       }
-
-      // Sort each hexagon's cells by slot
       for (const cells of hexagons.values()) {
-        cells.sort((a: any, b: any) => a.slot - b.slot);
+        cells.sort((a: { slot: number }, b: { slot: number }) => a.slot - b.slot);
       }
 
       const engine = this.createEngine();
-      const engineState = {
+      const engineState: GameState = {
         hexagons,
         score: game.score,
-        wordCount: game.wordCount,
+        wordCount: game.word_count,
         wordsFound: new Set<string>(),
-        status: 'active' as const,
+        status: 'active',
       };
 
-      const foundWords = await tx.gameWord.findMany({
-        where: { gameId },
-        select: { word: true },
-      });
+      const { rows: foundWords } = await client.query<{ word: string }>(
+        'SELECT word FROM game_words WHERE game_id = $1', [gameId],
+      );
       for (const { word } of foundWords) {
         engineState.wordsFound.add(word);
       }
@@ -166,61 +187,58 @@ export class GameService {
       const result = await engine.submitWord(engineState, { path });
 
       if (!result.valid) {
+        await client.query('ROLLBACK');
         return { valid: false, word: result.word, reason: result.reason };
       }
 
       // Deactivate consumed cells
       for (const step of result.consumedCells) {
-        await tx.cell.update({
-          where: { gameId_hexQ_hexR_slot: { gameId, hexQ: step.hexQ, hexR: step.hexR, slot: step.slot } },
-          data: { isActive: false },
-        });
+        await client.query(
+          'UPDATE cells SET is_active = false WHERE game_id = $1 AND hex_q = $2 AND hex_r = $3 AND slot = $4',
+          [gameId, step.hexQ, step.hexR, step.slot],
+        );
       }
 
       // Record the word
-      await tx.gameWord.create({
-        data: {
-          gameId,
-          word: result.word,
-          points: result.points,
-          cellPath: path as any,
-        },
-      });
+      await client.query(
+        'INSERT INTO game_words (game_id, word, points, cell_path) VALUES ($1, $2, $3, $4)',
+        [gameId, result.word, result.points, JSON.stringify(path)],
+      );
 
       // Update game score
-      await tx.game.update({
-        where: { id: gameId },
-        data: {
-          score: { increment: result.points },
-          wordCount: { increment: 1 },
-        },
-      });
+      await client.query(
+        'UPDATE games SET score = score + $1, word_count = word_count + 1 WHERE id = $2',
+        [result.points, gameId],
+      );
 
       // Record in user history
-      await tx.userWordHistory.create({
-        data: { userId, word: result.word, points: result.points, mode: game.mode },
-      });
+      await client.query(
+        'INSERT INTO user_word_history (user_id, word, points, mode) VALUES ($1, $2, $3, $4)',
+        [userId, result.word, result.points, game.mode],
+      );
 
-      // Increment word discovery frequency (for rarity scoring)
+      // Increment word discovery frequency
       await this.dictionary.incrementFreq(result.word);
 
       // Check campaign completion
       let campaignComplete = false;
       if (game.mode === GameMode.CAMPAIGN && game.level) {
-        const level = CAMPAIGN_LEVELS.find(l => l.level === game.level);
-        if (level && engine.checkCampaignCompletion(engineState, level.targetScore)) {
-          await tx.game.update({
-            where: { id: gameId },
-            data: { status: GameStatus.FINISHED, finishedAt: new Date() },
-          });
+        const lvl = CAMPAIGN_LEVELS.find(l => l.level === game.level);
+        if (lvl && engine.checkCampaignCompletion(engineState, lvl.targetScore)) {
+          await client.query(
+            'UPDATE games SET status = $1, finished_at = $2 WHERE id = $3',
+            [GameStatus.FINISHED, new Date(), gameId],
+          );
           campaignComplete = true;
         }
       }
 
+      await client.query('COMMIT');
+
       this.socketService.sendToUser(userId, 'score:update', {
         gameId,
         score: game.score + result.points,
-        wordCount: game.wordCount + 1,
+        wordCount: game.word_count + 1,
         word: result.word,
         wordPoints: result.points,
       });
@@ -229,7 +247,7 @@ export class GameService {
         this.socketService.sendToUser(userId, 'game:finished', {
           gameId,
           finalScore: game.score + result.points,
-          wordsFound: game.wordCount + 1,
+          wordsFound: game.word_count + 1,
         });
       }
 
@@ -241,120 +259,101 @@ export class GameService {
         totalScore: game.score + result.points,
         campaignComplete,
       };
-    });
-
-    if (txResult.valid && txResult.consumedCells && txResult.consumedCells.length > 0) {
-      await this.cellRespawnService.enqueueRespawn({
-        gameId,
-        userId,
-        cells: txResult.consumedCells.map((c: any) => ({ q: c.hexQ, r: c.hexR, slot: c.slot })),
-      });
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
     }
-
-    return txResult;
   }
 
   async resetGame(userId: string, gameId: string) {
-    const game = await this.prisma.game.findFirst({
-      where: { id: gameId, userId, status: GameStatus.ACTIVE },
-      include: { cells: true },
-    });
+    const { rows: [game] } = await this.pool.query<GameRow>(
+      'SELECT * FROM games WHERE id = $1 AND user_id = $2 AND status = $3',
+      [gameId, userId, GameStatus.ACTIVE],
+    );
     if (!game) throw new NotFoundException('Active game not found');
 
     const engine = this.createEngine();
     const newState = engine.createInitialState({
-      mode: game.mode.toLowerCase() as any,
-      hexCount: game.hexCount,
-      cellsPerHex: game.cellsPerHex,
+      mode: game.mode.toLowerCase() as GameModeEnum,
+      hexCount: game.hex_count,
+      cellsPerHex: game.cells_per_hex,
     });
 
-    const newScore = 0;
-    const newWordCount = 0;
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    await this.prisma.$transaction(async (tx) => {
-      // Replace all cells with fresh letters
-      for (const [hexKey, cells] of newState.hexagons) {
+      for (const [, cells] of newState.hexagons) {
         for (const cell of cells) {
-          await tx.cell.update({
-            where: {
-              gameId_hexQ_hexR_slot: {
-                gameId,
-                hexQ: cell.hexQ,
-                hexR: cell.hexR,
-                slot: cell.slot,
-              },
-            },
-            data: { char: cell.char, points: cell.points, isActive: true },
-          });
+          await client.query(
+            'UPDATE cells SET char = $1, points = $2, is_active = true WHERE game_id = $3 AND hex_q = $4 AND hex_r = $5 AND slot = $6',
+            [cell.char, cell.points, gameId, cell.hexQ, cell.hexR, cell.slot],
+          );
         }
       }
 
-      await tx.game.update({
-        where: { id: gameId },
-        data: { score: newScore, wordCount: newWordCount },
-      });
+      await client.query('UPDATE games SET score = 0, word_count = 0 WHERE id = $1', [gameId]);
+      await client.query('DELETE FROM game_words WHERE game_id = $1', [gameId]);
 
-      // Clear found words (so they can be found again on fresh board)
-      await tx.gameWord.deleteMany({ where: { gameId } });
-    });
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
 
-    const updatedCells = await this.prisma.cell.findMany({ where: { gameId } });
-    return this.formatGameResponse(
-      { ...game, score: newScore, wordCount: newWordCount },
-      updatedCells,
-    );
+    const { rows: updatedCells } = await this.pool.query<CellRow>('SELECT * FROM cells WHERE game_id = $1', [gameId]);
+    return this.formatGameResponse({ ...game, score: 0, word_count: 0 }, updatedCells);
   }
 
   async getGame(userId: string, gameId: string) {
-    const game = await this.prisma.game.findFirst({
-      where: { id: gameId, userId },
-      include: { cells: true },
-    });
+    const { rows: [game] } = await this.pool.query<GameRow>(
+      'SELECT * FROM games WHERE id = $1 AND user_id = $2', [gameId, userId],
+    );
     if (!game) throw new NotFoundException('Game not found');
-    return this.formatGameResponse(game, game.cells);
+
+    const { rows: cells } = await this.pool.query<CellRow>('SELECT * FROM cells WHERE game_id = $1', [game.id]);
+    return this.formatGameResponse(game, cells);
   }
 
   async getCampaignProgress(userId: string) {
-    const completed = await this.prisma.game.findMany({
-      where: { userId, mode: 'CAMPAIGN', status: 'FINISHED' },
-      select: { level: true, score: true },
-      orderBy: { level: 'asc' },
-    });
-    const active = await this.prisma.game.findFirst({
-      where: { userId, mode: 'CAMPAIGN', status: 'ACTIVE' },
-      select: { id: true, level: true, score: true },
-    });
+    const { rows: completed } = await this.pool.query<{ level: number; score: number }>(
+      'SELECT level, score FROM games WHERE user_id = $1 AND mode = $2 AND status = $3 ORDER BY level ASC',
+      [userId, GameMode.CAMPAIGN, GameStatus.FINISHED],
+    );
+    const { rows: [active] } = await this.pool.query<{ id: string; level: number; score: number }>(
+      'SELECT id, level, score FROM games WHERE user_id = $1 AND mode = $2 AND status = $3',
+      [userId, GameMode.CAMPAIGN, GameStatus.ACTIVE],
+    );
+
     return {
-      completedLevels: completed.map(g => ({ level: g.level!, score: g.score })),
-      activeGame: active ? { id: active.id, level: active.level!, score: active.score } : null,
+      completedLevels: completed.map(g => ({ level: g.level, score: g.score })),
+      activeGame: active ? { id: active.id, level: active.level, score: active.score } : null,
     };
   }
 
-  private formatGameResponse(game: any, cells: any[]) {
-    // Group cells by hexagon
-    const hexMap = new Map<string, any[]>();
+  private formatGameResponse(game: GameRow, cells: CellRow[]) {
+    const hexMap = new Map<string, { id?: string; hexQ: number; hexR: number; slot: number; char: string; points: number; isActive: boolean }[]>();
     for (const c of cells) {
-      const key = `${c.hexQ},${c.hexR}`;
+      const key = `${c.hex_q},${c.hex_r}`;
       if (!hexMap.has(key)) hexMap.set(key, []);
       hexMap.get(key)!.push({
         id: c.id,
-        hexQ: c.hexQ,
-        hexR: c.hexR,
+        hexQ: c.hex_q,
+        hexR: c.hex_r,
         slot: c.slot,
         char: c.char,
         points: c.points,
-        isActive: c.isActive,
+        isActive: c.is_active,
       });
     }
 
-    // Sort cells within each hexagon by slot
     const hexagons = [...hexMap.entries()].map(([key, hCells]) => {
       const [q, r] = key.split(',').map(Number);
-      return {
-        q,
-        r,
-        cells: hCells.sort((a: any, b: any) => a.slot - b.slot),
-      };
+      return { q, r, cells: hCells.sort((a: { slot: number }, b: { slot: number }) => a.slot - b.slot) };
     });
 
     return {
@@ -364,9 +363,9 @@ export class GameService {
       level: game.level,
       status: game.status.toLowerCase(),
       score: game.score,
-      wordCount: game.wordCount,
-      hexCount: game.hexCount,
-      cellsPerHex: game.cellsPerHex,
+      wordCount: game.word_count,
+      hexCount: game.hex_count,
+      cellsPerHex: game.cells_per_hex,
       hexagons,
     };
   }

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { useGameStore } from '../stores/game';
-import { useApi } from '../composables/useApi';
+import { useGameStore } from '@/stores/game';
+import { useApi } from '@/composables/useApi';
 import { CAMPAIGN_LEVELS } from '@hexawords/types';
-import GameBoard from '../components/game/GameBoard.vue';
+import GameBoard from '@/components/game/GameBoard.vue';
 
 const router = useRouter();
 const game = useGameStore();
@@ -22,7 +22,7 @@ const maxUnlocked = computed(() => {
 
 onMounted(async () => {
   try {
-    const progress = await api.get<any>('/games/campaign/progress');
+    const progress = await api.get<{ completedLevels: Array<{ level: number; score: number }>; activeGame: { id: string; level: number; score: number } | null }>('/games/campaign/progress');
     for (const l of progress.completedLevels) {
       completedLevels.value.add(l.level);
     }
@@ -36,7 +36,7 @@ onUnmounted(() => game.resetGame());
 async function startLevel(level: number) {
   loading.value = true;
   try {
-    await game.startGame('campaign' as any, undefined, level);
+    await game.startGame('campaign', undefined, level);
   } finally {
     loading.value = false;
   }

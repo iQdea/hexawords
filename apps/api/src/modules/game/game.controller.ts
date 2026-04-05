@@ -2,12 +2,11 @@ import { Controller, Post, Get, Body, Param, Req, UseGuards } from '@nestjs/comm
 import { GameService } from './game.service';
 import { OptionalAuthGuard } from '../../common/guards/optional-auth.guard';
 import type { GameComplexity, GameMode, WordPathStep } from '@hexawords/types';
-import type { Request } from 'express';
+import type { AuthenticatedRequest } from '../../common/types';
 
 /** Extract userId from JWT payload or X-User-Id header. */
-function getUserId(req: Request): string {
-  const user = (req as any).user;
-  if (user?.userId) return user.userId;
+function getUserId(req: AuthenticatedRequest): string {
+  if (req.user?.userId) return req.user.userId;
   return req.headers['x-user-id'] as string ?? '';
 }
 
@@ -18,7 +17,7 @@ export class GameController {
 
   @Post('new')
   async createGame(
-    @Req() req: Request,
+    @Req() req: AuthenticatedRequest,
     @Body() body: { mode: GameMode; complexity?: GameComplexity; level?: number },
   ) {
     const userId = getUserId(req);
@@ -28,7 +27,7 @@ export class GameController {
 
   @Post(':id/submit-word')
   async submitWord(
-    @Req() req: Request,
+    @Req() req: AuthenticatedRequest,
     @Param('id') gameId: string,
     @Body() body: { path: WordPathStep[] },
   ) {
@@ -37,19 +36,19 @@ export class GameController {
   }
 
   @Post(':id/reset')
-  async resetGame(@Req() req: Request, @Param('id') gameId: string) {
+  async resetGame(@Req() req: AuthenticatedRequest, @Param('id') gameId: string) {
     const userId = getUserId(req);
     return this.gameService.resetGame(userId, gameId);
   }
 
   @Get('campaign/progress')
-  async getCampaignProgress(@Req() req: Request) {
+  async getCampaignProgress(@Req() req: AuthenticatedRequest) {
     const userId = getUserId(req);
     return this.gameService.getCampaignProgress(userId);
   }
 
   @Get(':id')
-  async getGame(@Req() req: Request, @Param('id') gameId: string) {
+  async getGame(@Req() req: AuthenticatedRequest, @Param('id') gameId: string) {
     const userId = getUserId(req);
     return this.gameService.getGame(userId, gameId);
   }

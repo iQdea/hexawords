@@ -9,5 +9,4 @@ dist/
 coverage/
 .vite/
 .idea/
-sc2_nest/
-apps/api/src/prisma/seed/words.json
+apps/api/src/seed/words.json

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { useApi } from '../composables/useApi';
-import { useAuthStore } from '../stores/auth';
+import { useApi } from '@/composables/useApi';
+import { useAuthStore } from '@/stores/auth';
 
 const router = useRouter();
 const api = useApi();
@@ -49,8 +49,8 @@ async function handleSubmit() {
 
     auth.isAuthenticated = true;
     router.push('/');
-  } catch (e: any) {
-    error.value = e.message;
+  } catch (e: unknown) {
+    error.value = e instanceof Error ? e.message : 'Ошибка';
   } finally {
     loading.value = false;
   }

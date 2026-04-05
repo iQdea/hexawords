@@ -16,7 +16,7 @@ Hexawords is a browser-based word game where the playing field is a cluster of h
 
 | Tool | Version |
 |------|---------|
-| Node.js | 22 or higher |
+| Node.js | 22.17 or higher |
 | pnpm | 10 or higher |
 | Docker | Any recent version (for PostgreSQL + Redis) |
 
@@ -32,12 +32,11 @@ pnpm install
 # 3. Build the shared packages (types, hex-math, game-engine)
 pnpm turbo build --filter='./packages/*'
 
-# 4. Set up the database (Prisma generate, migrate, seed)
+# 4. Set up the database (seed dictionary)
 cd apps/api
 cp ../../.env .env
-DATABASE_URL="postgresql://hexawords:hexawords_dev@localhost:5432/hexawords" npx prisma generate --schema=src/prisma/schema.prisma
-DATABASE_URL="postgresql://hexawords:hexawords_dev@localhost:5432/hexawords" npx prisma migrate dev --schema=src/prisma/schema.prisma
-DATABASE_URL="postgresql://hexawords:hexawords_dev@localhost:5432/hexawords" npx prisma db seed
+DATABASE_URL="postgresql://hexawords:hexawords_dev@localhost:5432/hexawords" npx ts-node src/seed/download-dict.ts
+DATABASE_URL="postgresql://hexawords:hexawords_dev@localhost:5432/hexawords" npx ts-node src/seed/seed.ts
 cd ../..
 
 # 5. Start the API server (runs on port 3000)
@@ -194,11 +193,9 @@ npx nest start                                      # Start server
 npx nest start --watch                               # Start with hot reload
 npx jest --config test/jest-e2e.json --forceExit     # Run e2e tests
 
-# Prisma
-DATABASE_URL="postgresql://hexawords:hexawords_dev@localhost:5432/hexawords" npx prisma generate --schema=src/prisma/schema.prisma
-DATABASE_URL="postgresql://hexawords:hexawords_dev@localhost:5432/hexawords" npx prisma migrate dev --schema=src/prisma/schema.prisma
-DATABASE_URL="postgresql://hexawords:hexawords_dev@localhost:5432/hexawords" npx prisma db seed
-DATABASE_URL="postgresql://hexawords:hexawords_dev@localhost:5432/hexawords" npx prisma studio --schema=src/prisma/schema.prisma
+# Database
+DATABASE_URL="postgresql://hexawords:hexawords_dev@localhost:5432/hexawords" npx ts-node src/seed/seed.ts  # Seed dictionary
+DATABASE_URL="postgresql://hexawords:hexawords_dev@localhost:5432/hexawords" npx ts-node src/seed/seed.ts  # Seed dictionary
 ```
 
 ### Web (from apps/web/)
@@ -223,7 +220,7 @@ pnpm preview              # Preview production build
 | Frontend | Socket.IO Client | Real-time updates |
 | Frontend | vite-plugin-pwa | Progressive Web App |
 | Backend | NestJS 11 | API framework |
-| Backend | Prisma | ORM / database toolkit |
+| Backend | pg (node-postgres) | Raw SQL with typed results |
 | Backend | PostgreSQL 16 | Primary database |
 | Backend | Redis 7 | Queue backend / caching |
 | Backend | BullMQ | Delayed job processing |
@@ -309,6 +306,6 @@ All variables are defined in the root `.env` file. Copy it into `apps/api/` befo
 
 - **Russian language** for all user-facing strings.
 - Packages use **CommonJS** module format (NestJS compatibility).
-- All game state mutations wrapped in `prisma.$transaction`.
+- All game state mutations wrapped in `db.transaction().execute()`.
 - WebSocket events use `namespace:action` naming (e.g. `cell:respawned`).
 - API errors return Russian messages for auth/validation.
