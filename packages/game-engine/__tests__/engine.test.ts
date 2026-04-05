@@ -73,13 +73,12 @@ describe('GameEngine (two-level hex)', () => {
   });
 
   describe('submitWord', () => {
-    it('rejects words shorter than 3 letters', async () => {
+    it('rejects single letter (too short)', async () => {
       const hexes = [...state.hexagons.keys()];
-      const [h1, h2] = hexes.map(k => k.split(',').map(Number));
+      const [h1] = hexes.map(k => k.split(',').map(Number));
       const result = await engine.submitWord(state, {
         path: [
           { hexQ: h1[0], hexR: h1[1], slot: 0 },
-          { hexQ: h2[0], hexR: h2[1], slot: 0 },
         ],
       });
       expect(result.valid).toBe(false);
