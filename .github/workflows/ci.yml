@@ -61,17 +61,11 @@ jobs:
       - name: Run unit tests
         run: pnpm turbo test --filter='./packages/*'
 
-      - name: Generate Prisma client
-        run: cd apps/api && npx prisma generate --schema=src/prisma/schema.prisma
-
-      - name: Run migrations
-        run: cd apps/api && npx prisma migrate deploy --schema=src/prisma/schema.prisma
-
-      - name: Download dictionary
-        run: cd apps/api && npx ts-node src/prisma/seed/download-dict.ts
+      - name: Create database schema
+        run: PGPASSWORD=hexawords_test psql -h localhost -U hexawords -d hexawords_test -f apps/api/src/seed/init.sql
 
       - name: Seed dictionary
-        run: cd apps/api && npx ts-node src/prisma/seed.ts
+        run: cd apps/api && npx ts-node src/seed/seed.ts
 
       - name: Build API
         run: cd apps/api && npx nest build
