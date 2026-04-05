@@ -152,7 +152,7 @@ function nextLevel() {
           </div>
         </div>
         <div class="divider" v-if="game.foundWords.length > 0"></div>
-        <div v-for="(w, i) in game.foundWords.slice(0, 10)" :key="i" class="found-word" :class="{ repeat: w.repeat }">
+        <div v-for="(w, i) in game.foundWords.slice(0, 10)" :key="i" class="found-word">
           <span class="fw-word">{{ w.word }}</span>
           <span class="fw-pts">+{{ w.points }}</span>
         </div>

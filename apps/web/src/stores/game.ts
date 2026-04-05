@@ -209,5 +209,5 @@ const REASON_MAP: Record<string, string> = {
 };
 
 function translateReason(reason?: string): string {
-  return REASON_MAP[reason || ''] ?? reason;
+  return REASON_MAP[reason || ''] ?? reason ?? 'Неизвестная ошибка';
 }
