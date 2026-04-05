@@ -143,6 +143,10 @@ export const useGameStore = defineStore('game', () => {
           foundWords.value = copy;
         }
 
+        if (result.campaignComplete) {
+          status.value = 'finished';
+        }
+
         // Mark consumed cells as inactive
         if (result.consumedCells) {
           for (const step of result.consumedCells) {

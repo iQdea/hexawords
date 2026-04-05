@@ -53,11 +53,19 @@ socket.onScoreUpdate((data) => {
 socket.onGameFinished((data) => {
   if (data.gameId !== game.gameId) return;
   game.status = 'finished';
+  justFinished.value = true;
+});
+
+watch(() => game.status, (val, old) => {
+  if (val === 'finished' && old !== 'finished') {
+    justFinished.value = true;
+  }
 });
 
 onUnmounted(() => socket.disconnect());
 
 const isFinished = computed(() => game.status === 'finished');
+const justFinished = ref(false);
 
 async function handleSubmit() {
   if (isFinished.value) return;
@@ -104,7 +112,7 @@ function nextLevel() {
           title="Сбросить"
         >&#10005;</button>
         <button
-          v-if="game.score > 0"
+          v-if="game.score > 0 && !isFinished"
           class="ctrl-btn"
           @click="showResetConfirm = true"
           title="Перемешать"
@@ -124,6 +132,9 @@ function nextLevel() {
 
       <!-- Right: scores + words -->
       <div class="side-panel">
+        <div v-if="isFinished && game.mode === 'campaign'" class="completed-badge">
+          Уровень {{ game.level }} пройден
+        </div>
         <div class="scores-row">
           <div class="score-block">
             <div class="score-value">{{ game.score }}</div>
@@ -169,7 +180,7 @@ function nextLevel() {
 
     <!-- Level completed overlay -->
     <transition name="fade">
-      <div v-if="isFinished && game.mode === 'campaign'" class="confirm-overlay">
+      <div v-if="justFinished && game.mode === 'campaign'" class="confirm-overlay">
         <div class="confirm-dialog">
           <p class="confirm-title">Уровень пройден!</p>
           <p class="confirm-text">
@@ -187,6 +198,17 @@ function nextLevel() {
 </template>
 
 <style scoped>
+.completed-badge {
+  background: #43a047;
+  color: #fff;
+  text-align: center;
+  padding: 0.4rem 0.8rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
 .game-board {
   display: flex;
   flex-direction: column;

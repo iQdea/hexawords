@@ -76,8 +76,8 @@ export class GameService {
     let existingParams: (string | number | null | undefined)[];
 
     if (mode === GameModeEnum.CAMPAIGN) {
-      existingQuery = 'SELECT * FROM games WHERE user_id = $1 AND mode = $2 AND status = $3 AND level = $4';
-      existingParams = [userId, modeUpper, GameStatus.ACTIVE, level];
+      existingQuery = 'SELECT * FROM games WHERE user_id = $1 AND mode = $2 AND status IN ($3, $4) AND level = $5 ORDER BY CASE status WHEN $3 THEN 0 ELSE 1 END LIMIT 1';
+      existingParams = [userId, modeUpper, GameStatus.ACTIVE, GameStatus.FINISHED, level];
     } else {
       existingQuery = 'SELECT * FROM games WHERE user_id = $1 AND mode = $2 AND status = $3 AND complexity = $4';
       existingParams = [userId, modeUpper, GameStatus.ACTIVE, complexity!.toUpperCase()];
