@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onUnmounted } from 'vue';
+import { ref, computed, watch, onUnmounted } from 'vue';
 import { useGameStore } from '@/stores/game';
 import { useSocket } from '@/composables/useSocket';
 import { useApi } from '@/composables/useApi';
@@ -57,13 +57,22 @@ socket.onGameFinished((data) => {
 
 onUnmounted(() => socket.disconnect());
 
+const isFinished = computed(() => game.status === 'finished');
+
 async function handleSubmit() {
+  if (isFinished.value) return;
   submitting.value = true;
   try {
     await game.submitWord();
   } finally {
     submitting.value = false;
   }
+}
+
+function nextLevel() {
+  if (!game.level) return;
+  game.resetGame();
+  game.startGame('campaign', undefined, game.level + 1);
 }
 </script>
 
@@ -84,7 +93,7 @@ async function handleSubmit() {
         <button class="ctrl-btn" @click="game.resetGame()" title="Назад">&#8592;</button>
         <button
           class="ctrl-btn ctrl-submit"
-          :disabled="game.selectedPath.length < 2 || submitting"
+          :disabled="game.selectedPath.length < 2 || submitting || isFinished"
           @click="handleSubmit"
           title="Проверить"
         >&#10003;</button>
@@ -109,7 +118,7 @@ async function handleSubmit() {
           :selected-path="game.selectedPath"
           :used-hex-keys="game.usedHexKeys"
           :selected-cell-keys="game.selectedCellKeys"
-          @cell-click="(hq, hr, s) => game.selectCell(hq, hr, s)"
+          @cell-click="(hq, hr, s) => !isFinished && game.selectCell(hq, hr, s)"
         />
       </div>
 
@@ -153,6 +162,23 @@ async function handleSubmit() {
               {{ resetting ? '...' : 'Да, перемешать' }}
             </button>
             <button class="btn clear" @click="showResetConfirm = false">Отмена</button>
+          </div>
+        </div>
+      </div>
+    </transition>
+
+    <!-- Level completed overlay -->
+    <transition name="fade">
+      <div v-if="isFinished && game.mode === 'campaign'" class="confirm-overlay">
+        <div class="confirm-dialog">
+          <p class="confirm-title">Уровень пройден!</p>
+          <p class="confirm-text">
+            Очки: {{ game.score.toLocaleString() }}<br>
+            Слов найдено: {{ game.wordCount }}
+          </p>
+          <div class="confirm-actions">
+            <button class="btn submit" @click="nextLevel">Следующий уровень</button>
+            <button class="btn clear" @click="game.resetGame()">К выбору уровней</button>
           </div>
         </div>
       </div>
