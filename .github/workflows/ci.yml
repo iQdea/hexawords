@@ -67,6 +67,9 @@ jobs:
       - name: Run migrations
         run: cd apps/api && npx prisma migrate deploy --schema=src/prisma/schema.prisma
 
+      - name: Download dictionary
+        run: cd apps/api && npx ts-node src/prisma/seed/download-dict.ts
+
       - name: Seed dictionary
         run: cd apps/api && npx ts-node src/prisma/seed.ts
 
