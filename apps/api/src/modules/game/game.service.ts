@@ -253,6 +253,8 @@ export class GameService {
         });
       }
 
+      await client.query('COMMIT');
+
       txResult = {
         valid: true,
         word: result.word,

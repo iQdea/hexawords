@@ -8,6 +8,10 @@ import { SocketService } from '../socket/socket.service';
 import { WeightedLetterGenerator, shouldRespawnVowel, RUSSIAN_VOWELS } from '@hexawords/game-engine';
 import type { CellRespawnJobData } from './cell-respawn.service';
 
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 @Processor('cell-respawn')
 export class CellRespawnProcessor extends WorkerHost {
   private readonly logger = new Logger(CellRespawnProcessor.name);
@@ -70,8 +74,12 @@ export class CellRespawnProcessor extends WorkerHost {
 
       await client.query('COMMIT');
 
-      if (updatedCells.length > 0) {
-        this.socketService.sendToUser(userId, 'cell:respawned', { gameId, cells: updatedCells });
+      // Send cells one by one with delay for animation
+      for (const cell of updatedCells) {
+        this.socketService.sendToUser(userId, 'cell:respawned', { gameId, cells: [cell] });
+        if (cell !== updatedCells[updatedCells.length - 1]) {
+          await sleep(150);
+        }
       }
     } catch (err) {
       await client.query('ROLLBACK');
