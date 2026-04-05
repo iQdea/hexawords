@@ -79,7 +79,7 @@ function formatScore(n: number): string {
           <span v-if="lvl.level > maxUnlocked" class="level-lock">&#x1F512;</span>
           <span v-else-if="completedLevels.has(lvl.level)" class="level-check">&#x2713;</span>
           <span class="level-num">{{ lvl.level }}</span>
-          <span class="level-meta">{{ gridLabel(lvl.gridSize) }} / {{ formatScore(lvl.targetScore) }}</span>
+          <span class="level-meta">{{ gridLabel(lvl.hexCount) }} / {{ formatScore(lvl.targetScore) }}</span>
         </button>
       </div>
       </div>

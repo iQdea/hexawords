@@ -137,7 +137,7 @@ export const useGameStore = defineStore('game', () => {
           for (const step of result.consumedCells) {
             const hex = hexagons.value.find(h => h.q === step.hexQ && h.r === step.hexR);
             if (hex?.cells[step.slot]) {
-              hex.cells[step.slot].isActive = false;
+              hex.cells[step.slot]!.isActive = false;
             }
           }
         }

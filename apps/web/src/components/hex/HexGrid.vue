@@ -85,7 +85,7 @@ const connectionLines = computed(() => {
     if (!prevHex || !currHex) continue;
     const from = slotPosition(prevHex, prev.slot);
     const to = slotPosition(currHex, curr.slot);
-    lines.push({ x1: from.cx, y1: from.cy, x2: to.cx, y2: to.cy, color: LINE_COLORS[i % LINE_COLORS.length] });
+    lines.push({ x1: from.cx, y1: from.cy, x2: to.cx, y2: to.cy, color: LINE_COLORS[i % LINE_COLORS.length]! });
   }
   return lines;
 });

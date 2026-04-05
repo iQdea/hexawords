@@ -2,7 +2,7 @@
 import { ref, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useGameStore } from '../stores/game';
-import type { GameComplexity } from '@hexawords/types';
+import { GameComplexity } from '@hexawords/types';
 import GameBoard from '../components/game/GameBoard.vue';
 
 const router = useRouter();
@@ -11,10 +11,10 @@ const loading = ref(false);
 const errorMsg = ref('');
 
 const complexities: Array<{ value: GameComplexity; label: string }> = [
-  { value: 'crazy', label: 'Безумие' },
-  { value: 'hard', label: 'Сложно' },
-  { value: 'middle', label: 'Средне' },
-  { value: 'easy', label: 'Легко' },
+  { value: GameComplexity.CRAZY, label: 'Безумие' },
+  { value: GameComplexity.HARD, label: 'Сложно' },
+  { value: GameComplexity.MIDDLE, label: 'Средне' },
+  { value: GameComplexity.EASY, label: 'Легко' },
 ];
 
 onUnmounted(() => game.resetGame());
