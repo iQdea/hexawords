@@ -35,7 +35,6 @@ pnpm turbo build --filter='./packages/*'
 # 4. Set up the database (seed dictionary)
 cd apps/api
 cp ../../.env .env
-DATABASE_URL="postgresql://hexawords:hexawords_dev@localhost:5432/hexawords" npx ts-node src/seed/download-dict.ts
 DATABASE_URL="postgresql://hexawords:hexawords_dev@localhost:5432/hexawords" npx ts-node src/seed/seed.ts
 cd ../..
 

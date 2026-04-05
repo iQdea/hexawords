@@ -18,7 +18,7 @@ const loading = ref(true);
 
 onMounted(async () => {
   try {
-    entries.value = await api.get('/leaderboard?limit=20');
+    entries.value = await api.get<LeaderboardEntry[]>('/leaderboard?limit=20');
   } catch {
     // empty board
   } finally {

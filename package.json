@@ -11,8 +11,7 @@
     "db:up": "docker compose up -d postgres redis",
     "db:migrate": "echo 'No migration runner configured — use raw SQL files'",
     "db:seed": "cd apps/api && DATABASE_URL=\"postgresql://hexawords:hexawords_dev@localhost:5432/hexawords\" npx ts-node src/seed/seed.ts",
-    "db:dict": "cd apps/api && npx ts-node src/seed/download-dict.ts",
-    "setup": "pnpm install && pnpm db:up && pnpm turbo build --filter='./packages/*' && cd apps/api && cp ../../.env .env && cd ../.. && pnpm db:dict && pnpm db:seed",
+    "setup": "pnpm install && pnpm db:up && pnpm turbo build --filter='./packages/*' && cd apps/api && cp ../../.env .env && cd ../.. && pnpm db:seed",
     "start": "pnpm turbo build --filter='./packages/*' && cd apps/api && npx nest start &  cd apps/web && pnpm dev --host"
   },
   "devDependencies": {

@@ -46,5 +46,5 @@ export function useApi() {
     });
   }
 
-  return { get, post, patch, request };
+  return { get, post, patch };
 }

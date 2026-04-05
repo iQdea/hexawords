@@ -83,7 +83,6 @@ export const useGameStore = defineStore('game', () => {
   }
 
   function selectCell(hexQ: number, hexR: number, slot: number) {
-    const hexKey = `${hexQ},${hexR}`;
     const cellKey = `${hexQ},${hexR},${slot}`;
 
     // If this exact cell is the last selected — deselect
@@ -127,17 +126,17 @@ export const useGameStore = defineStore('game', () => {
       });
 
       if (result.valid) {
-        score.value = result.totalScore;
+        score.value = result.totalScore ?? 0;
         wordCount.value += 1;
         lastWord.value = result.word;
-        lastWordPoints.value = result.points;
+        lastWordPoints.value = result.points ?? 0;
 
         // Mark consumed cells as inactive
         if (result.consumedCells) {
           for (const step of result.consumedCells) {
             const hex = hexagons.value.find(h => h.q === step.hexQ && h.r === step.hexR);
             if (hex?.cells[step.slot]) {
-              hex.cells[step.slot]!.isActive = false;
+              hex!.cells[step.slot]!.isActive = false;
             }
           }
         }
@@ -156,7 +155,7 @@ export const useGameStore = defineStore('game', () => {
     for (const cell of cells) {
       const hex = hexagons.value.find(h => h.q === cell.hexQ && h.r === cell.hexR);
       if (hex?.cells[cell.slot]) {
-        hex.cells[cell.slot] = { ...cell, isActive: true };
+        hex!.cells[cell.slot] = { ...cell, isActive: true };
       }
     }
   }
@@ -192,6 +191,6 @@ const REASON_MAP: Record<string, string> = {
   same_hexagon: 'Нельзя брать две буквы из одного хексагона',
 };
 
-function translateReason(reason: string): string {
-  return REASON_MAP[reason] ?? reason;
+function translateReason(reason?: string): string {
+  return REASON_MAP[reason || ''] ?? reason;
 }

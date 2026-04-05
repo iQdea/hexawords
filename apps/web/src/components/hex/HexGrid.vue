@@ -13,7 +13,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  cellClick: [hexQ: number, hexR: number, slot: number];
+  (e: 'cellClick', hexQ: number, hexR: number, slot: number): void;
 }>();
 
 const size = computed(() => props.hexSize ?? 110);

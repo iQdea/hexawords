@@ -5,28 +5,29 @@ import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import type { TokenPayload } from './auth.service';
 
-/** Extract JWT from cookie or Authorization header. */
+/** Extract JWT from the cookie or Authorization header. */
 function extractJwt(req: Request): string | null {
-  // Try cookie first
   if (req.cookies?.['access_token']) {
     return req.cookies['access_token'];
   }
-  // Fall back to Authorization header
   const auth = req.headers.authorization;
   if (auth?.startsWith('Bearer ')) {
-    return auth.slice(7);
+    return auth!.slice(7);
   }
   return null;
 }
 
+const JwtStrategyBase = PassportStrategy(Strategy);
+
 @Injectable()
-export class JwtStrategy extends PassportStrategy(Strategy) {
+export class JwtStrategy extends JwtStrategyBase {
   constructor(config: ConfigService) {
+    // biome-ignore lint/suspicious/noExplicitAny: PassportStrategy mixin types are unresolvable
     super({
       jwtFromRequest: extractJwt,
       ignoreExpiration: false,
       secretOrKey: config.get('JWT_SECRET', 'dev-secret-change-in-prod'),
-    });
+    } as any);
   }
 
   validate(payload: TokenPayload) {

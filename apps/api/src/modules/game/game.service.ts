@@ -1,6 +1,6 @@
 import { Inject, Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Pool } from 'pg';
-import { PG_POOL, GameMode, GameComplexity, GameStatus, AuthProvider } from '../../database';
+import { PG_POOL, GameMode, GameStatus, AuthProvider } from '../../database';
 import type { GameRow, CellRow } from '../../database';
 import { DictionaryService } from '../dictionary/dictionary.service';
 import { SocketService } from '../socket/socket.service';
@@ -139,6 +139,7 @@ export class GameService {
 
   async submitWord(userId: string, gameId: string, path: WordPathStep[]) {
     const client = await this.pool.connect();
+    let txResult: { valid: boolean; word: string; reason?: string; points?: number; consumedCells?: Array<{ hexQ: number; hexR: number; slot: number }>; totalScore?: number; campaignComplete?: boolean };
     try {
       await client.query('BEGIN');
 
@@ -188,7 +189,8 @@ export class GameService {
 
       if (!result.valid) {
         await client.query('ROLLBACK');
-        return { valid: false, word: result.word, reason: result.reason };
+        txResult = { valid: false, word: result.word, reason: result.reason };
+        return txResult;
       }
 
       // Deactivate consumed cells
@@ -251,7 +253,7 @@ export class GameService {
         });
       }
 
-      return {
+      txResult = {
         valid: true,
         word: result.word,
         points: result.points,
@@ -265,6 +267,16 @@ export class GameService {
     } finally {
       client.release();
     }
+
+    if (txResult.valid && txResult.consumedCells && txResult.consumedCells.length > 0) {
+      await this.cellRespawnService.enqueueRespawn({
+        gameId,
+        userId,
+        cells: txResult.consumedCells.map((c) => ({ q: c.hexQ, r: c.hexR, slot: c.slot })),
+      });
+    }
+
+    return txResult;
   }
 
   async resetGame(userId: string, gameId: string) {
