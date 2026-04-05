@@ -16,6 +16,7 @@ interface GameResponse {
   hexCount: number;
   cellsPerHex: number;
   hexagons: HexagonDTO[];
+  words?: Array<{ word: string; points: number }>;
 }
 
 export const useGameStore = defineStore('game', () => {
@@ -33,6 +34,7 @@ export const useGameStore = defineStore('game', () => {
   const lastWord = ref<string | null>(null);
   const lastWordPoints = ref(0);
   const error = ref<string | null>(null);
+  const foundWords = ref<Array<{ word: string; points: number }>>([]);
 
   const currentWord = computed(() =>
     selectedPath.value
@@ -63,6 +65,7 @@ export const useGameStore = defineStore('game', () => {
     hexagons.value = data.hexagons;
     selectedPath.value = [];
     error.value = null;
+    foundWords.value = data.words ?? [];
 
     // Set campaign target
     if (data.mode === 'campaign' && data.level) {
@@ -130,6 +133,15 @@ export const useGameStore = defineStore('game', () => {
         wordCount.value += 1;
         lastWord.value = result.word;
         lastWordPoints.value = result.points ?? 0;
+        const newWord = { word: result.word, points: result.points ?? 0 };
+        const idx = foundWords.value.findIndex(w => w.points < newWord.points);
+        if (idx === -1) {
+          foundWords.value = [...foundWords.value, newWord];
+        } else {
+          const copy = [...foundWords.value];
+          copy.splice(idx, 0, newWord);
+          foundWords.value = copy;
+        }
 
         // Mark consumed cells as inactive
         if (result.consumedCells) {
@@ -173,12 +185,13 @@ export const useGameStore = defineStore('game', () => {
     lastWord.value = null;
     lastWordPoints.value = 0;
     error.value = null;
+    foundWords.value = [];
   }
 
   return {
     gameId, mode, level, targetScore, status, hexagons, selectedPath,
     currentWord, usedHexKeys, selectedCellKeys,
-    score, wordCount, lastWord, lastWordPoints, error,
+    score, wordCount, lastWord, lastWordPoints, error, foundWords,
     startGame, selectCell, clearSelection, submitWord,
     handleCellRespawn, resetGame,
   };

@@ -11,8 +11,6 @@ const api = useApi();
 const submitting = ref(false);
 const resetting = ref(false);
 const showResetConfirm = ref(false);
-const foundWords = ref<Array<{ word: string; points: number; repeat?: boolean }>>([]);
-
 async function handleReset() {
   if (!game.gameId) return;
   resetting.value = true;
@@ -21,22 +19,18 @@ async function handleReset() {
     game.score = data.score;
     game.wordCount = data.wordCount;
     game.hexagons = data.hexagons;
+    game.foundWords = [];
     game.lastWord = null;
     game.lastWordPoints = 0;
     game.error = null;
     game.clearSelection();
   } catch (e: unknown) {
     game.error = e instanceof Error ? e.message : 'Ошибка';
-    foundWords.value = [];
   } finally {
     resetting.value = false;
     showResetConfirm.value = false;
   }
 }
-
-watch(() => game.wordCount, (count) => {
-  if (count === 0) foundWords.value = [];
-});
 
 watch(() => game.gameId, (id) => {
   if (id) {
@@ -52,8 +46,8 @@ socket.onCellsRespawned((data) => {
 
 socket.onScoreUpdate((data) => {
   if (data.gameId !== game.gameId) return;
-  game.score = data.score;
-  game.wordCount = data.wordCount;
+  // Score and wordCount already updated from submitWord response.
+  // WebSocket only used for lastWord display when needed.
 });
 
 socket.onGameFinished((data) => {
@@ -65,15 +59,8 @@ onUnmounted(() => socket.disconnect());
 
 async function handleSubmit() {
   submitting.value = true;
-  const prevWordCount = game.wordCount;
   try {
     await game.submitWord();
-    // Only add if wordCount actually increased (new word accepted)
-    if (game.wordCount > prevWordCount && game.lastWord) {
-      const isRepeat = foundWords.value.some(w => w.word === game.lastWord);
-      foundWords.value.unshift({ word: game.lastWord, points: game.lastWordPoints, repeat: isRepeat });
-      if (foundWords.value.length > 10) foundWords.value.pop();
-    }
   } finally {
     submitting.value = false;
   }
@@ -144,8 +131,8 @@ async function handleSubmit() {
             <div class="target-fill" :style="{ width: Math.min(100, game.score / game.targetScore * 100) + '%' }"></div>
           </div>
         </div>
-        <div class="divider" v-if="foundWords.length > 0"></div>
-        <div v-for="(w, i) in foundWords.slice(0, 10)" :key="i" class="found-word" :class="{ repeat: w.repeat }">
+        <div class="divider" v-if="game.foundWords.length > 0"></div>
+        <div v-for="(w, i) in game.foundWords.slice(0, 10)" :key="i" class="found-word" :class="{ repeat: w.repeat }">
           <span class="fw-word">{{ w.word }}</span>
           <span class="fw-pts">+{{ w.points }}</span>
         </div>

@@ -88,7 +88,8 @@ export class GameService {
     if (existingGames.length > 0) {
       const game = existingGames[0];
       const { rows: cells } = await this.pool.query<CellRow>('SELECT * FROM cells WHERE game_id = $1', [game.id]);
-      return this.formatGameResponse(game, cells);
+      const { rows: words } = await this.pool.query<{ word: string; points: number }>('SELECT word, points FROM game_words WHERE game_id = $1 ORDER BY points DESC, created_at ASC', [game.id]);
+      return this.formatGameResponse(game, cells, words);
     }
 
     // Generate new game
@@ -330,7 +331,8 @@ export class GameService {
     if (!game) throw new NotFoundException('Game not found');
 
     const { rows: cells } = await this.pool.query<CellRow>('SELECT * FROM cells WHERE game_id = $1', [game.id]);
-    return this.formatGameResponse(game, cells);
+    const { rows: words } = await this.pool.query<{ word: string; points: number }>('SELECT word, points FROM game_words WHERE game_id = $1 ORDER BY points DESC, created_at ASC', [game.id]);
+    return this.formatGameResponse(game, cells, words);
   }
 
   async getCampaignProgress(userId: string) {
@@ -349,7 +351,7 @@ export class GameService {
     };
   }
 
-  private formatGameResponse(game: GameRow, cells: CellRow[]) {
+  private formatGameResponse(game: GameRow, cells: CellRow[], words: Array<{ word: string; points: number }> = []) {
     const hexMap = new Map<string, { id?: string; hexQ: number; hexR: number; slot: number; char: string; points: number; isActive: boolean }[]>();
     for (const c of cells) {
       const key = `${c.hex_q},${c.hex_r}`;
@@ -381,6 +383,7 @@ export class GameService {
       hexCount: game.hex_count,
       cellsPerHex: game.cells_per_hex,
       hexagons,
+      words,
     };
   }
 }
