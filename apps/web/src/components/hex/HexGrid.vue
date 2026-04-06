@@ -9,6 +9,7 @@ const props = defineProps<{
   selectedPath: WordPathStep[];
   usedHexKeys: Set<string>;
   selectedCellKeys: Set<string>;
+  darkCombo: Array<{ hexQ: number; hexR: number; slot: number }>;
   hexSize?: number;
 }>();
 
@@ -154,6 +155,9 @@ function selectionIndex(hexQ: number, hexR: number, slot: number): number {
         :char="cell.char"
         :points="cell.points"
         :is-active="cell.isActive"
+        :lock-type="cell.lockType ?? null"
+        :variant="cell.variant ?? null"
+        :dark-smoke="darkCombo.some(c => c.hexQ === hex.q && c.hexR === hex.r && c.slot === cell.slot)"
         :is-selected="selectedCellKeys.has(`${hex.q},${hex.r},${cell.slot}`)"
         :selection-index="selectionIndex(hex.q, hex.r, cell.slot)"
         @click="emit('cellClick', hex.q, hex.r, cell.slot)"

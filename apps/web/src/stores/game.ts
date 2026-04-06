@@ -2,7 +2,6 @@ import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { areAdjacent } from '@hexawords/hex-math';
 import type { CellDTO, HexagonDTO, WordPathStep } from '@hexawords/types';
-import { CAMPAIGN_LEVELS } from '@hexawords/types';
 import { useApi } from '@/composables/useApi';
 
 interface GameResponse {
@@ -15,6 +14,8 @@ interface GameResponse {
   wordCount: number;
   hexCount: number;
   cellsPerHex: number;
+  minWordLength: number;
+  targetScore: number | null;
   hexagons: HexagonDTO[];
   words?: Array<{ word: string; points: number }>;
 }
@@ -26,6 +27,7 @@ export const useGameStore = defineStore('game', () => {
   const mode = ref<string>('single');
   const level = ref<number | null>(null);
   const targetScore = ref<number | null>(null);
+  const minWordLength = ref(2);
   const status = ref<string>('idle');
   const hexagons = ref<HexagonDTO[]>([]);
   const selectedPath = ref<WordPathStep[]>([]);
@@ -35,6 +37,7 @@ export const useGameStore = defineStore('game', () => {
   const lastWordPoints = ref(0);
   const error = ref<string | null>(null);
   const foundWords = ref<Array<{ word: string; points: number }>>([]);
+  const darkCombo = ref<Array<{ hexQ: number; hexR: number; slot: number }>>([]);
 
   const currentWord = computed(() =>
     selectedPath.value
@@ -63,25 +66,22 @@ export const useGameStore = defineStore('game', () => {
     score.value = data.score;
     wordCount.value = data.wordCount;
     hexagons.value = data.hexagons;
+    minWordLength.value = data.minWordLength ?? 2;
     selectedPath.value = [];
     error.value = null;
     foundWords.value = data.words ?? [];
-
-    // Set campaign target
-    if (data.mode === 'campaign' && data.level) {
-      const lvl = CAMPAIGN_LEVELS.find(l => l.level === data.level);
-      targetScore.value = lvl?.targetScore ?? null;
-    } else {
-      targetScore.value = null;
-    }
+    targetScore.value = data.targetScore ?? null;
   }
 
   async function startGame(gameMode: string, complexity?: string, level?: number) {
-    const data = await api.post<GameResponse>('/games/new', {
+    const data = await api.post<GameResponse & { userId?: string }>('/games/new', {
       mode: gameMode,
       complexity,
       level,
     });
+    if (data.userId) {
+      localStorage.setItem('hexawords-user-id', data.userId);
+    }
     loadGame(data);
   }
 
@@ -110,7 +110,7 @@ export const useGameStore = defineStore('game', () => {
     // Check cell is active
     const hex = hexagons.value.find(h => h.q === hexQ && h.r === hexR);
     const cell = hex?.cells[slot];
-    if (!cell || !cell.isActive) return;
+    if (!cell || !cell.isActive || cell.lockType) return;
 
     selectedPath.value = [...selectedPath.value, { hexQ, hexR, slot }];
   }
@@ -124,7 +124,7 @@ export const useGameStore = defineStore('game', () => {
 
     error.value = null;
     try {
-      const result = await api.post<{ valid: boolean; word: string; points?: number; reason?: string; consumedCells?: Array<{ hexQ: number; hexR: number; slot: number }>; totalScore?: number; campaignComplete?: boolean }>(`/games/${gameId.value}/submit-word`, {
+      const result = await api.post<{ valid: boolean; word: string; points?: number; reason?: string; consumedCells?: Array<{ hexQ: number; hexR: number; slot: number }>; unlockedCells?: Array<{ hexQ: number; hexR: number; slot: number; variant: string | null }>; totalScore?: number; campaignComplete?: boolean }>(`/games/${gameId.value}/submit-word`, {
         path: selectedPath.value,
       });
 
@@ -147,12 +147,32 @@ export const useGameStore = defineStore('game', () => {
           status.value = 'finished';
         }
 
-        // Mark consumed cells as inactive
+        // Check dark combo before marking inactive
+        darkCombo.value = [];
         if (result.consumedCells) {
+          const allDark = result.consumedCells.every(step => {
+            const hex = hexagons.value.find(h => h.q === step.hexQ && h.r === step.hexR);
+            return hex?.cells[step.slot]?.variant === 'dark';
+          });
+          if (allDark && result.consumedCells.length >= 2) {
+            darkCombo.value = [...result.consumedCells];
+          }
+
+          // Mark consumed cells as inactive
           for (const step of result.consumedCells) {
             const hex = hexagons.value.find(h => h.q === step.hexQ && h.r === step.hexR);
             if (hex?.cells[step.slot]) {
               hex!.cells[step.slot]!.isActive = false;
+            }
+          }
+        }
+
+        // Unlock cells
+        if (result.unlockedCells) {
+          for (const step of result.unlockedCells) {
+            const hex = hexagons.value.find(h => h.q === step.hexQ && h.r === step.hexR);
+            if (hex?.cells[step.slot]) {
+              hex!.cells[step.slot]!.lockType = null;
             }
           }
         }
@@ -195,7 +215,7 @@ export const useGameStore = defineStore('game', () => {
   return {
     gameId, mode, level, targetScore, status, hexagons, selectedPath,
     currentWord, usedHexKeys, selectedCellKeys,
-    score, wordCount, lastWord, lastWordPoints, error, foundWords,
+    score, wordCount, lastWord, lastWordPoints, error, foundWords, minWordLength, darkCombo,
     startGame, selectCell, clearSelection, submitWord,
     handleCellRespawn, resetGame,
   };

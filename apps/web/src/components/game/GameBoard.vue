@@ -56,8 +56,17 @@ socket.onGameFinished((data) => {
   justFinished.value = true;
 });
 
+// Only show "level complete" banner when status changes during gameplay, not on load
+let statusChangeAllowed = false;
+watch(() => game.gameId, () => {
+  justFinished.value = false;
+  statusChangeAllowed = false;
+  // Allow status changes after a short delay (past initial load)
+  setTimeout(() => { statusChangeAllowed = true; }, 500);
+});
+
 watch(() => game.status, (val, old) => {
-  if (val === 'finished' && old !== 'finished') {
+  if (statusChangeAllowed && val === 'finished' && old !== 'finished') {
     justFinished.value = true;
   }
 });
@@ -77,15 +86,15 @@ async function handleSubmit() {
   }
 }
 
-function nextLevel() {
-  if (!game.level) return;
-  game.resetGame();
-  game.startGame('campaign', undefined, game.level + 1);
-}
+const emit = defineEmits<{
+  (e: 'nextLevel'): void;
+  (e: 'toLevelList'): void;
+}>();
 </script>
 
 <template>
   <div class="game-board">
+    <slot name="nav" />
     <div class="word-bar">
       <div class="word-preview" :class="{ active: game.currentWord }">
         {{ game.currentWord ? game.currentWord.toUpperCase() : '\u00A0' }}
@@ -101,7 +110,7 @@ function nextLevel() {
         <button class="ctrl-btn" @click="game.resetGame()" title="Назад">&#8592;</button>
         <button
           class="ctrl-btn ctrl-submit"
-          :disabled="game.selectedPath.length < 2 || submitting || isFinished"
+          :disabled="game.selectedPath.length < game.minWordLength || submitting || isFinished"
           @click="handleSubmit"
           title="Проверить"
         >&#10003;</button>
@@ -126,6 +135,7 @@ function nextLevel() {
           :selected-path="game.selectedPath"
           :used-hex-keys="game.usedHexKeys"
           :selected-cell-keys="game.selectedCellKeys"
+          :dark-combo="game.darkCombo"
           @cell-click="(hq, hr, s) => !isFinished && game.selectCell(hq, hr, s)"
         />
       </div>
@@ -144,6 +154,9 @@ function nextLevel() {
             <div class="score-value">{{ game.wordCount }}</div>
             <div class="score-label">слов</div>
           </div>
+        </div>
+        <div v-if="game.minWordLength > 2" class="min-length-hint">
+          Мин. длина слова: {{ game.minWordLength }} букв
         </div>
         <div v-if="game.targetScore" class="target-bar">
           <div class="target-label">Цель: {{ game.targetScore.toLocaleString() }}</div>
@@ -188,8 +201,8 @@ function nextLevel() {
             Слов найдено: {{ game.wordCount }}
           </p>
           <div class="confirm-actions">
-            <button class="btn submit" @click="nextLevel">Следующий уровень</button>
-            <button class="btn clear" @click="game.resetGame()">К выбору уровней</button>
+            <button class="btn submit" @click="emit('nextLevel')">Следующий уровень</button>
+            <button class="btn clear" @click="emit('toLevelList')">К выбору уровней</button>
           </div>
         </div>
       </div>
@@ -198,6 +211,13 @@ function nextLevel() {
 </template>
 
 <style scoped>
+.min-length-hint {
+  text-align: center;
+  font-size: 0.75rem;
+  color: #888;
+  padding: 0.2rem 0;
+}
+
 .completed-badge {
   background: #43a047;
   color: #fff;

@@ -48,6 +48,8 @@ export class GameEngine {
         char: letter.char,
         points: letter.points,
         isActive: true,
+        lockType: null,
+        variant: null,
       }));
       hexagons.set(hexKey(coord.q, coord.r), cells);
     }
@@ -61,11 +63,11 @@ export class GameEngine {
     };
   }
 
-  async submitWord(state: GameState, submission: WordSubmission): Promise<SubmitResult> {
+  async submitWord(state: GameState, submission: WordSubmission, minWordLength = 2): Promise<SubmitResult> {
     const { path } = submission;
 
     // 1. Minimum length
-    if (path.length < 2) {
+    if (path.length < minWordLength) {
       return this.invalid(state, path, 'too_short');
     }
 
@@ -152,6 +154,8 @@ export class GameEngine {
         char,
         points: newPts,
         isActive: true,
+        lockType: null,
+        variant: null,
       };
       hex[step.slot] = newCell;
       newCells.push(newCell);

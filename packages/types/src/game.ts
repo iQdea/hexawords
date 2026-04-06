@@ -33,6 +33,7 @@ export interface GameConfig {
   campaignLevel?: number;
   hexCount: number;        // number of hexagons on the field
   cellsPerHex: number;     // letters per hexagon (usually 7)
+  minWordLength?: number;  // minimum word length (default 2)
 }
 
 export interface GameDTO {

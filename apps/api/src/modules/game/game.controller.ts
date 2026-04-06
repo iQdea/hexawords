@@ -58,6 +58,11 @@ export class GameController {
     return this.gameService.resetGame(userId, gameId);
   }
 
+  @Get('campaign/levels')
+  getCampaignLevels() {
+    return this.gameService.getCampaignLevels();
+  }
+
   @Get('campaign/progress')
   async getCampaignProgress(
     @Req() req: AuthenticatedRequest,

@@ -10,6 +10,17 @@ export interface HexagonDTO {
   cells: CellDTO[];
 }
 
+export type CellVariant = 'light' | 'dark' | null;
+
+/**
+ * Lock types:
+ * - gray: unlocked when ANY cell in same hexagon is used
+ * - blue: unlocked when CENTER cell (slot 0) is used
+ * - purple: unlocked when a neighboring ring cell (not center) is used
+ * - orange: unlocked when BOTH center AND an adjacent ring cell are used
+ */
+export type LockType = 'gray' | 'blue' | 'purple' | 'orange' | null;
+
 /** A single letter cell inside a hexagon. */
 export interface CellDTO {
   id: string;
@@ -19,6 +30,8 @@ export interface CellDTO {
   char: string;
   points: number;
   isActive: boolean;
+  lockType: LockType;
+  variant: CellVariant;
 }
 
 export interface CellState {
@@ -28,6 +41,8 @@ export interface CellState {
   char: string;
   points: number;
   isActive: boolean;
+  lockType: LockType;
+  variant: CellVariant;
 }
 
 /** Path element: which hexagon and which slot was picked. */

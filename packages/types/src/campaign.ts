@@ -2,47 +2,51 @@ export interface CampaignLevel {
   level: number;
   hexCount: number;
   targetScore: number;
+  /** Minimum word length for this level. */
+  minWordLength: number;
 }
 
 export const CAMPAIGN_LEVELS: CampaignLevel[] = [
-  // 3 hexagons — levels 1-5
-  { level: 1,  hexCount: 3,  targetScore: 500 },
-  { level: 2,  hexCount: 3,  targetScore: 1000 },
-  { level: 3,  hexCount: 3,  targetScore: 1800 },
-  { level: 4,  hexCount: 3,  targetScore: 3000 },
-  { level: 5,  hexCount: 3,  targetScore: 5000 },
+  // Tier 1: 3 hexagons, words 2+ letters — easy start
+  { level: 1,  hexCount: 3, minWordLength: 2, targetScore: 300 },
+  { level: 2,  hexCount: 3, minWordLength: 2, targetScore: 600 },
+  { level: 3,  hexCount: 3, minWordLength: 2, targetScore: 1000 },
+  { level: 4,  hexCount: 3, minWordLength: 2, targetScore: 1800 },
+  { level: 5,  hexCount: 3, minWordLength: 2, targetScore: 3000 },
 
-  // 4 hexagons — levels 6-10
-  { level: 6,  hexCount: 4,  targetScore: 3000 },
-  { level: 7,  hexCount: 4,  targetScore: 5000 },
-  { level: 8,  hexCount: 4,  targetScore: 8000 },
-  { level: 9,  hexCount: 4,  targetScore: 12000 },
-  { level: 10, hexCount: 4,  targetScore: 18000 },
+  // Tier 2: 4 hexagons, words 3+ letters
+  { level: 6,  hexCount: 4, minWordLength: 3, targetScore: 2000 },
+  { level: 7,  hexCount: 4, minWordLength: 3, targetScore: 4000 },
+  { level: 8,  hexCount: 4, minWordLength: 3, targetScore: 7000 },
+  { level: 9,  hexCount: 4, minWordLength: 3, targetScore: 11000 },
+  { level: 10, hexCount: 4, minWordLength: 3, targetScore: 16000 },
 
-  // 5 hexagons — levels 11-17
-  { level: 11, hexCount: 5,  targetScore: 8000 },
-  { level: 12, hexCount: 5,  targetScore: 13000 },
-  { level: 13, hexCount: 5,  targetScore: 20000 },
-  { level: 14, hexCount: 5,  targetScore: 30000 },
-  { level: 15, hexCount: 5,  targetScore: 45000 },
-  { level: 16, hexCount: 5,  targetScore: 65000 },
-  { level: 17, hexCount: 5,  targetScore: 90000 },
+  // Tier 3: 5 hexagons, words 3+ letters
+  { level: 11, hexCount: 5, minWordLength: 3, targetScore: 8000 },
+  { level: 12, hexCount: 5, minWordLength: 3, targetScore: 14000 },
+  { level: 13, hexCount: 5, minWordLength: 3, targetScore: 22000 },
+  { level: 14, hexCount: 5, minWordLength: 3, targetScore: 35000 },
+  { level: 15, hexCount: 5, minWordLength: 3, targetScore: 50000 },
 
-  // 7 hexagons — levels 18-25
-  { level: 18, hexCount: 7,  targetScore: 40000 },
-  { level: 19, hexCount: 7,  targetScore: 60000 },
-  { level: 20, hexCount: 7,  targetScore: 85000 },
-  { level: 21, hexCount: 7,  targetScore: 120000 },
-  { level: 22, hexCount: 7,  targetScore: 170000 },
-  { level: 23, hexCount: 7,  targetScore: 230000 },
-  { level: 24, hexCount: 7,  targetScore: 310000 },
-  { level: 25, hexCount: 7,  targetScore: 420000 },
+  // Tier 4: 5 hexagons, words 4+ letters — harder
+  { level: 16, hexCount: 5, minWordLength: 4, targetScore: 30000 },
+  { level: 17, hexCount: 5, minWordLength: 4, targetScore: 50000 },
+  { level: 18, hexCount: 5, minWordLength: 4, targetScore: 75000 },
+  { level: 19, hexCount: 5, minWordLength: 4, targetScore: 110000 },
+  { level: 20, hexCount: 5, minWordLength: 4, targetScore: 160000 },
 
-  // 7 hexagons endgame — levels 26-31
-  { level: 26, hexCount: 7,  targetScore: 550000 },
-  { level: 27, hexCount: 7,  targetScore: 720000 },
-  { level: 28, hexCount: 7,  targetScore: 950000 },
-  { level: 29, hexCount: 7,  targetScore: 1250000 },
-  { level: 30, hexCount: 7,  targetScore: 1650000 },
-  { level: 31, hexCount: 7,  targetScore: 2200000 },
+  // Tier 5: 7 hexagons, words 4+ letters
+  { level: 21, hexCount: 7, minWordLength: 4, targetScore: 80000 },
+  { level: 22, hexCount: 7, minWordLength: 4, targetScore: 130000 },
+  { level: 23, hexCount: 7, minWordLength: 4, targetScore: 200000 },
+  { level: 24, hexCount: 7, minWordLength: 4, targetScore: 300000 },
+  { level: 25, hexCount: 7, minWordLength: 4, targetScore: 420000 },
+
+  // Tier 6: 7 hexagons, words 5+ letters — endgame
+  { level: 26, hexCount: 7, minWordLength: 5, targetScore: 250000 },
+  { level: 27, hexCount: 7, minWordLength: 5, targetScore: 400000 },
+  { level: 28, hexCount: 7, minWordLength: 5, targetScore: 600000 },
+  { level: 29, hexCount: 7, minWordLength: 5, targetScore: 900000 },
+  { level: 30, hexCount: 7, minWordLength: 5, targetScore: 1300000 },
+  { level: 31, hexCount: 7, minWordLength: 5, targetScore: 2000000 },
 ];

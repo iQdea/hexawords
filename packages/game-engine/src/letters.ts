@@ -1,17 +1,17 @@
 import type { LetterGenerator } from './interfaces';
 
 /**
- * Frequency weights based on Russian word corpus analysis.
- * Higher weight = more common letter = appears more often on the board.
+ * Frequency weights derived from 82750-word Russian dictionary (781K chars).
+ * Values = per-10000 frequency. Higher weight = more common in real words.
  */
 export const RUSSIAN_LETTER_WEIGHTS: Record<string, number> = {
-  'о': 1200, 'е': 1100, 'а': 1050, 'и': 1000, 'н': 850,
-  'т': 800,  'с': 750,  'р': 700,  'в': 650,  'л': 600,
-  'к': 550,  'м': 500,  'д': 450,  'п': 430,  'у': 400,
-  'я': 350,  'ы': 330,  'ь': 300,  'г': 280,  'з': 260,
-  'б': 240,  'ч': 220,  'й': 200,  'х': 180,  'ж': 160,
-  'ш': 140,  'ю': 120,  'ц': 100,  'щ': 80,   'э': 60,
-  'ф': 40,   'ё': 30,   'ъ': 10,
+  'о': 993,  'а': 952,  'и': 861,  'е': 850,  'н': 698,
+  'р': 636,  'т': 626,  'к': 492,  'с': 490,  'л': 440,
+  'в': 349,  'п': 313,  'м': 264,  'д': 245,  'у': 204,
+  'я': 131,  'ц': 123,  'ч': 119,  'г': 166,  'з': 172,
+  'б': 159,  'ь': 210,  'ш': 71,   'х': 67,   'ы': 66,
+  'ж': 62,   'й': 55,   'ф': 80,   'щ': 47,   'э': 31,
+  'ю': 25,   'ё': 10,   'ъ': 3,
 };
 
 /** Russian vowels. */

@@ -31,10 +31,10 @@ export class CellRespawnProcessor extends WorkerHost {
     try {
       await client.query('BEGIN');
 
-      const { rows: [game] } = await client.query<{ id: string; status: string }>(
-        'SELECT id, status FROM games WHERE id = $1', [gameId],
+      const { rows: [game] } = await client.query<{ id: string; status: string; color_mode: boolean }>(
+        'SELECT id, status, color_mode FROM games WHERE id = $1', [gameId],
       );
-      if (!game || game.status !== GameStatus.ACTIVE) {
+      if (!game) {
         await client.query('ROLLBACK');
         return;
       }
@@ -52,11 +52,12 @@ export class CellRespawnProcessor extends WorkerHost {
         const needVowel = shouldRespawnVowel(vowelCount, activeCount);
         const { char, points } = needVowel ? this.gen.generateVowel() : this.gen.generateConsonant();
 
+        const variant = game.color_mode ? (Math.random() < 0.7 ? 'light' : 'dark') : null;
         const { rows: [cell] } = await client.query<CellRow>(
-          `UPDATE cells SET char = $1, points = $2, is_active = true
-           WHERE game_id = $3 AND hex_q = $4 AND hex_r = $5 AND slot = $6
-           RETURNING id, hex_q, hex_r, slot, char, points`,
-          [char, points, gameId, coord.q, coord.r, coord.slot],
+          `UPDATE cells SET char = $1, points = $2, is_active = true, variant = $3
+           WHERE game_id = $4 AND hex_q = $5 AND hex_r = $6 AND slot = $7
+           RETURNING id, hex_q, hex_r, slot, char, points, variant`,
+          [char, points, variant, gameId, coord.q, coord.r, coord.slot],
         );
 
         if (cell) {
@@ -68,6 +69,7 @@ export class CellRespawnProcessor extends WorkerHost {
             char: cell.char,
             points: cell.points,
             isActive: true,
+            variant: cell.variant,
           });
         }
       }
@@ -75,6 +77,7 @@ export class CellRespawnProcessor extends WorkerHost {
       await client.query('COMMIT');
 
       // Send cells one by one with delay for animation
+      this.logger.log(`Respawning ${updatedCells.length} cells for user ${userId} game ${gameId}`);
       for (const cell of updatedCells) {
         this.socketService.sendToUser(userId, 'cell:respawned', { gameId, cells: [cell] });
         if (cell !== updatedCells[updatedCells.length - 1]) {

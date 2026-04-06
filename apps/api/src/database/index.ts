@@ -15,4 +15,5 @@ export type {
   WordRow,
   UserScoreRow,
   UserWordHistoryRow,
+  CampaignLevelRow,
 } from './database.types';

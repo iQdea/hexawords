@@ -26,6 +26,15 @@ export enum GameStatus {
 
 // ─── ROW TYPES (match DB columns, snake_case) ───────
 
+export interface CampaignLevelRow {
+  level: number;
+  hex_count: number;
+  min_word_length: number;
+  target_score: number;
+  color_mode: boolean;
+  locked_ratio: number;
+}
+
 export interface UserRow {
   id: string;
   created_at: Date;
@@ -60,6 +69,8 @@ export interface GameRow {
   word_count: number;
   hex_count: number;
   cells_per_hex: number;
+  min_word_length: number;
+  color_mode: boolean;
   created_at: Date;
   finished_at: Date | null;
 }
@@ -73,6 +84,8 @@ export interface CellRow {
   char: string;
   points: number;
   is_active: boolean;
+  lock_type: string | null;
+  variant: string | null;
 }
 
 export interface GameWordRow {

@@ -1,7 +1,7 @@
 import { Inject, Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { PG_POOL, GameMode, GameStatus, AuthProvider } from '../../database';
-import type { GameRow, CellRow } from '../../database';
+import type { GameRow, CellRow, CampaignLevelRow } from '../../database';
 import { DictionaryService } from '../dictionary/dictionary.service';
 import { SocketService } from '../socket/socket.service';
 import { CellRespawnService } from '../queue/cell-respawn.service';
@@ -13,9 +13,34 @@ import {
   GameComplexity as ComplexityEnum,
   COMPLEXITY_HEX_COUNT,
   CELLS_PER_HEX,
-  CAMPAIGN_LEVELS,
 } from '@hexawords/types';
 import type { WordPathStep } from '@hexawords/types';
+
+/**
+ * Pick a lock type with weighted probability, respecting slot constraints.
+ * - gray (40%): any slot
+ * - blue (20%): NOT center (slot 0) — requires center to unlock
+ * - purple (25%): any slot
+ * - orange (15%): NOT center (slot 0) — requires center + neighbor
+ */
+function pickLockType(slot: number): 'gray' | 'blue' | 'purple' | 'orange' {
+  const isCenter = slot === 0;
+  // Weighted options: [type, weight]
+  const options: Array<['gray' | 'blue' | 'purple' | 'orange', number]> = [
+    ['gray', 40],
+    ['purple', 25],
+  ];
+  if (!isCenter) {
+    options.push(['blue', 20], ['orange', 15]);
+  }
+  const total = options.reduce((s, [, w]) => s + w, 0);
+  let rand = Math.random() * total;
+  for (const [type, weight] of options) {
+    rand -= weight;
+    if (rand <= 0) return type;
+  }
+  return 'gray';
+}
 
 @Injectable()
 export class GameService {
@@ -47,6 +72,21 @@ export class GameService {
     }
   }
 
+  private async getCampaignLevel(level: number): Promise<CampaignLevelRow> {
+    const { rows } = await this.pool.query<CampaignLevelRow>(
+      'SELECT * FROM campaign_levels WHERE level = $1', [level],
+    );
+    if (rows.length === 0) throw new BadRequestException(`Invalid campaign level: ${level}`);
+    return rows[0];
+  }
+
+  async getCampaignLevels(): Promise<CampaignLevelRow[]> {
+    const { rows } = await this.pool.query<CampaignLevelRow>(
+      'SELECT * FROM campaign_levels ORDER BY level ASC',
+    );
+    return rows;
+  }
+
   private createEngine(): GameEngine {
     return new GameEngine(
       {
@@ -60,11 +100,16 @@ export class GameService {
   async createGame(userId: string, mode: GameModeEnum, complexity?: ComplexityEnum, level?: number) {
     await this.ensureUser(userId);
     let hexCount: number;
+    let minWordLength = 2;
+    let colorMode = false;
+    let lockedRatio = 0;
 
     if (mode === GameModeEnum.CAMPAIGN) {
-      const campaignLevel = CAMPAIGN_LEVELS.find(l => l.level === level);
-      if (!campaignLevel) throw new BadRequestException(`Invalid campaign level: ${level}`);
-      hexCount = campaignLevel.hexCount;
+      const campaignLevel = await this.getCampaignLevel(level!);
+      hexCount = campaignLevel.hex_count;
+      minWordLength = campaignLevel.min_word_length;
+      colorMode = campaignLevel.color_mode;
+      lockedRatio = campaignLevel.locked_ratio;
     } else {
       if (!complexity) throw new BadRequestException('Complexity required for single mode');
       hexCount = COMPLEXITY_HEX_COUNT[complexity];
@@ -89,7 +134,7 @@ export class GameService {
       const game = existingGames[0];
       const { rows: cells } = await this.pool.query<CellRow>('SELECT * FROM cells WHERE game_id = $1', [game.id]);
       const { rows: words } = await this.pool.query<{ word: string; points: number }>('SELECT word, points FROM game_words WHERE game_id = $1 ORDER BY points DESC, created_at ASC', [game.id]);
-      return this.formatGameResponse(game, cells, words);
+      return await this.formatGameResponse(game, cells, words);
     }
 
     // Generate new game
@@ -102,34 +147,38 @@ export class GameService {
       await client.query('BEGIN');
 
       const { rows: [game] } = await client.query<GameRow>(
-        `INSERT INTO games (user_id, mode, complexity, level, hex_count, cells_per_hex)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-        [userId, modeUpper, complexity ? complexity.toString().toUpperCase() : null, level ?? null, hexCount, CELLS_PER_HEX],
+        `INSERT INTO games (user_id, mode, complexity, level, hex_count, cells_per_hex, min_word_length, color_mode)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        [userId, modeUpper, complexity ? complexity.toString().toUpperCase() : null, level ?? null, hexCount, CELLS_PER_HEX, minWordLength, colorMode],
       );
 
       // Build cell values
-      const cellValues: (string | number)[] = [];
+      const cellValues: (string | number | boolean | null)[] = [];
       const placeholders: string[] = [];
       let idx = 1;
       for (const coord of hexCoords) {
         const hexCells = state.hexagons.get(`${coord.q},${coord.r}`);
         if (!hexCells) continue;
         for (const cell of hexCells) {
-          placeholders.push(`($${idx}, $${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4}, $${idx + 5})`);
-          cellValues.push(game.id, coord.q, coord.r, cell.slot, cell.char, cell.points);
-          idx += 6;
+          const variant = colorMode ? (Math.random() < 0.7 ? 'light' : 'dark') : null;
+          const lockType = lockedRatio > 0 && Math.random() < lockedRatio
+            ? pickLockType(cell.slot)
+            : null;
+          placeholders.push(`($${idx}, $${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4}, $${idx + 5}, $${idx + 6}, $${idx + 7})`);
+          cellValues.push(game.id, coord.q, coord.r, cell.slot, cell.char, cell.points, variant, lockType);
+          idx += 8;
         }
       }
 
       await client.query(
-        `INSERT INTO cells (game_id, hex_q, hex_r, slot, char, points) VALUES ${placeholders.join(', ')}`,
+        `INSERT INTO cells (game_id, hex_q, hex_r, slot, char, points, variant, lock_type) VALUES ${placeholders.join(', ')}`,
         cellValues,
       );
 
       const { rows: cells } = await client.query<CellRow>('SELECT * FROM cells WHERE game_id = $1', [game.id]);
 
       await client.query('COMMIT');
-      return this.formatGameResponse(game, cells);
+      return await this.formatGameResponse(game, cells);
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;
@@ -140,7 +189,7 @@ export class GameService {
 
   async submitWord(userId: string, gameId: string, path: WordPathStep[]) {
     const client = await this.pool.connect();
-    let txResult: { valid: boolean; word: string; reason?: string; points?: number; consumedCells?: Array<{ hexQ: number; hexR: number; slot: number }>; totalScore?: number; campaignComplete?: boolean };
+    let txResult: { valid: boolean; word: string; reason?: string; points?: number; colorBonus?: number; consumedCells?: Array<{ hexQ: number; hexR: number; slot: number }>; unlockedCells?: Array<{ hexQ: number; hexR: number; slot: number; variant: string | null }>; totalScore?: number; campaignComplete?: boolean };
     try {
       await client.query('BEGIN');
 
@@ -153,7 +202,7 @@ export class GameService {
       const { rows: dbCells } = await client.query<CellRow>('SELECT * FROM cells WHERE game_id = $1', [gameId]);
 
       // Build engine state
-      const hexagons = new Map<string, { id?: string; hexQ: number; hexR: number; slot: number; char: string; points: number; isActive: boolean }[]>();
+      const hexagons = new Map<string, { id?: string; hexQ: number; hexR: number; slot: number; char: string; points: number; isActive: boolean; lockType: 'gray' | 'blue' | 'purple' | 'orange' | null; variant: 'light' | 'dark' | null }[]>();
       for (const cell of dbCells) {
         const key = `${cell.hex_q},${cell.hex_r}`;
         if (!hexagons.has(key)) hexagons.set(key, []);
@@ -164,6 +213,8 @@ export class GameService {
           char: cell.char,
           points: cell.points,
           isActive: cell.is_active,
+          lockType: cell.lock_type as 'gray' | 'blue' | 'purple' | 'orange' | null,
+          variant: cell.variant as 'light' | 'dark' | null,
         });
       }
       for (const cells of hexagons.values()) {
@@ -186,12 +237,25 @@ export class GameService {
         engineState.wordsFound.add(word);
       }
 
-      const result = await engine.submitWord(engineState, { path });
+      const result = await engine.submitWord(engineState, { path }, game.min_word_length);
 
       if (!result.valid) {
         await client.query('ROLLBACK');
         txResult = { valid: false, word: result.word, reason: result.reason };
         return txResult;
+      }
+
+      // Color bonus: x2 if all cells in the word share the same variant
+      let colorBonus = 1;
+      if (game.color_mode && result.consumedCells.length > 0) {
+        const variants = result.consumedCells.map(step => {
+          const cell = dbCells.find(c => c.hex_q === step.hexQ && c.hex_r === step.hexR && c.slot === step.slot);
+          return cell?.variant;
+        });
+        const first = variants[0];
+        if (first && variants.every(v => v === first)) {
+          colorBonus = 2;
+        }
       }
 
       // Deactivate consumed cells
@@ -202,23 +266,87 @@ export class GameService {
         );
       }
 
+      // Apply color bonus
+      const finalPoints = result.points * colorBonus;
+
       // Record the word
       await client.query(
         'INSERT INTO game_words (game_id, word, points, cell_path) VALUES ($1, $2, $3, $4)',
-        [gameId, result.word, result.points, JSON.stringify(path)],
+        [gameId, result.word, finalPoints, JSON.stringify(path)],
       );
 
       // Update game score
       await client.query(
         'UPDATE games SET score = score + $1, word_count = word_count + 1 WHERE id = $2',
-        [result.points, gameId],
+        [finalPoints, gameId],
       );
 
       // Record in user history
       await client.query(
         'INSERT INTO user_word_history (user_id, word, points, mode) VALUES ($1, $2, $3, $4)',
-        [userId, result.word, result.points, game.mode],
+        [userId, result.word, finalPoints, game.mode],
       );
+
+      // Unlock cells based on lock type rules
+      // gray: any cell in same hex used → unlock
+      // blue: center (slot 0) used → unlock
+      // purple: a neighboring ring slot (not center) used → unlock
+      // orange: both center AND adjacent ring slot used → unlock
+      const SLOT_NEIGHBORS: Record<number, number[]> = {
+        0: [1, 2, 3, 4, 5, 6],
+        1: [0, 2, 6], 2: [0, 1, 3], 3: [0, 2, 4],
+        4: [0, 3, 5], 5: [0, 4, 6], 6: [0, 5, 1],
+      };
+
+      // Build per-hex usage info
+      const hexUsage = new Map<string, { slots: Set<number>; hasCenter: boolean }>();
+      for (const step of result.consumedCells) {
+        const key = `${step.hexQ},${step.hexR}`;
+        if (!hexUsage.has(key)) hexUsage.set(key, { slots: new Set(), hasCenter: false });
+        const info = hexUsage.get(key)!;
+        info.slots.add(step.slot);
+        if (step.slot === 0) info.hasCenter = true;
+      }
+
+      const unlockedCells: Array<{ hex_q: number; hex_r: number; slot: number; char: string; points: number; variant: string | null }> = [];
+
+      // Check each locked cell in used hexagons
+      for (const [hexKey, usage] of hexUsage) {
+        const [hq, hr] = hexKey.split(',').map(Number);
+        const { rows: lockedCells } = await client.query<CellRow>(
+          'SELECT * FROM cells WHERE game_id = $1 AND hex_q = $2 AND hex_r = $3 AND lock_type IS NOT NULL',
+          [gameId, hq, hr],
+        );
+
+        for (const cell of lockedCells) {
+          let shouldUnlock = false;
+          const ringNeighbors = (SLOT_NEIGHBORS[cell.slot] ?? []).filter(s => s !== 0);
+
+          switch (cell.lock_type) {
+            case 'gray':
+              // Any cell in hex used
+              shouldUnlock = true;
+              break;
+            case 'blue':
+              // Center used
+              shouldUnlock = usage.hasCenter;
+              break;
+            case 'purple':
+              // Any neighboring ring slot (not center) used
+              shouldUnlock = ringNeighbors.some(s => usage.slots.has(s));
+              break;
+            case 'orange':
+              // Both center AND adjacent ring slot used
+              shouldUnlock = usage.hasCenter && ringNeighbors.some(s => usage.slots.has(s));
+              break;
+          }
+
+          if (shouldUnlock) {
+            await client.query('UPDATE cells SET lock_type = NULL WHERE id = $1', [cell.id]);
+            unlockedCells.push(cell);
+          }
+        }
+      }
 
       // Increment word discovery frequency
       await this.dictionary.incrementFreq(result.word);
@@ -226,8 +354,8 @@ export class GameService {
       // Check campaign completion
       let campaignComplete = false;
       if (game.mode === GameMode.CAMPAIGN && game.level) {
-        const lvl = CAMPAIGN_LEVELS.find(l => l.level === game.level);
-        if (lvl && engine.checkCampaignCompletion(engineState, lvl.targetScore)) {
+        const lvl = await this.getCampaignLevel(game.level);
+        if (game.score + finalPoints >= lvl.target_score) {
           await client.query(
             'UPDATE games SET status = $1, finished_at = $2 WHERE id = $3',
             [GameStatus.FINISHED, new Date(), gameId],
@@ -240,7 +368,7 @@ export class GameService {
 
       this.socketService.sendToUser(userId, 'score:update', {
         gameId,
-        score: game.score + result.points,
+        score: game.score + finalPoints,
         wordCount: game.word_count + 1,
         word: result.word,
         wordPoints: result.points,
@@ -249,7 +377,7 @@ export class GameService {
       if (campaignComplete) {
         this.socketService.sendToUser(userId, 'game:finished', {
           gameId,
-          finalScore: game.score + result.points,
+          finalScore: game.score + finalPoints,
           wordsFound: game.word_count + 1,
         });
       }
@@ -259,9 +387,11 @@ export class GameService {
       txResult = {
         valid: true,
         word: result.word,
-        points: result.points,
+        points: finalPoints,
+        colorBonus: colorBonus > 1 ? colorBonus : undefined,
         consumedCells: result.consumedCells,
-        totalScore: game.score + result.points,
+        unlockedCells: unlockedCells.map(c => ({ hexQ: c.hex_q, hexR: c.hex_r, slot: c.slot, variant: c.variant })),
+        totalScore: game.score + finalPoints,
         campaignComplete,
       };
     } catch (e) {
@@ -300,11 +430,22 @@ export class GameService {
     try {
       await client.query('BEGIN');
 
+      // Determine locked_ratio from campaign level config
+      let lockedRatio = 0;
+      if (game.mode === GameMode.CAMPAIGN && game.level) {
+        const lvl = await this.getCampaignLevel(game.level);
+        lockedRatio = lvl.locked_ratio;
+      }
+
       for (const [, cells] of newState.hexagons) {
         for (const cell of cells) {
+          const variant = game.color_mode ? (Math.random() < 0.7 ? 'light' : 'dark') : null;
+          const lockType = lockedRatio > 0 && Math.random() < lockedRatio
+            ? pickLockType(cell.slot)
+            : null;
           await client.query(
-            'UPDATE cells SET char = $1, points = $2, is_active = true WHERE game_id = $3 AND hex_q = $4 AND hex_r = $5 AND slot = $6',
-            [cell.char, cell.points, gameId, cell.hexQ, cell.hexR, cell.slot],
+            'UPDATE cells SET char = $1, points = $2, is_active = true, lock_type = $3, variant = $4 WHERE game_id = $5 AND hex_q = $6 AND hex_r = $7 AND slot = $8',
+            [cell.char, cell.points, lockType, variant, gameId, cell.hexQ, cell.hexR, cell.slot],
           );
         }
       }
@@ -321,7 +462,7 @@ export class GameService {
     }
 
     const { rows: updatedCells } = await this.pool.query<CellRow>('SELECT * FROM cells WHERE game_id = $1', [gameId]);
-    return this.formatGameResponse({ ...game, score: 0, word_count: 0 }, updatedCells);
+    return await this.formatGameResponse({ ...game, score: 0, word_count: 0 }, updatedCells);
   }
 
   async getGame(userId: string, gameId: string) {
@@ -332,7 +473,7 @@ export class GameService {
 
     const { rows: cells } = await this.pool.query<CellRow>('SELECT * FROM cells WHERE game_id = $1', [game.id]);
     const { rows: words } = await this.pool.query<{ word: string; points: number }>('SELECT word, points FROM game_words WHERE game_id = $1 ORDER BY points DESC, created_at ASC', [game.id]);
-    return this.formatGameResponse(game, cells, words);
+    return await this.formatGameResponse(game, cells, words);
   }
 
   async getCampaignProgress(userId: string) {
@@ -351,8 +492,13 @@ export class GameService {
     };
   }
 
-  private formatGameResponse(game: GameRow, cells: CellRow[], words: Array<{ word: string; points: number }> = []) {
-    const hexMap = new Map<string, { id?: string; hexQ: number; hexR: number; slot: number; char: string; points: number; isActive: boolean }[]>();
+  private async formatGameResponse(game: GameRow, cells: CellRow[], words: Array<{ word: string; points: number }> = []) {
+    let targetScore: number | null = null;
+    if (game.mode === GameMode.CAMPAIGN && game.level) {
+      const lvl = await this.getCampaignLevel(game.level);
+      targetScore = lvl.target_score;
+    }
+    const hexMap = new Map<string, { id?: string; hexQ: number; hexR: number; slot: number; char: string; points: number; isActive: boolean; lockType: 'gray' | 'blue' | 'purple' | 'orange' | null; variant: string | null }[]>();
     for (const c of cells) {
       const key = `${c.hex_q},${c.hex_r}`;
       if (!hexMap.has(key)) hexMap.set(key, []);
@@ -364,6 +510,8 @@ export class GameService {
         char: c.char,
         points: c.points,
         isActive: c.is_active,
+        lockType: c.lock_type as 'gray' | 'blue' | 'purple' | 'orange' | null,
+        variant: c.variant as 'light' | 'dark' | null,
       });
     }
 
@@ -382,6 +530,9 @@ export class GameService {
       wordCount: game.word_count,
       hexCount: game.hex_count,
       cellsPerHex: game.cells_per_hex,
+      minWordLength: game.min_word_length,
+      colorMode: game.color_mode,
+      targetScore,
       hexagons,
       words,
     };

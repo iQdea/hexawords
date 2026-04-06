@@ -37,6 +37,8 @@ CREATE TABLE games (
   word_count INT NOT NULL DEFAULT 0,
   hex_count INT NOT NULL,
   cells_per_hex INT NOT NULL DEFAULT 7,
+  min_word_length INT NOT NULL DEFAULT 2,
+  color_mode BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMP(3) NOT NULL DEFAULT now(),
   finished_at TIMESTAMP(3)
 );
@@ -51,6 +53,8 @@ CREATE TABLE cells (
   char VARCHAR(2) NOT NULL,
   points INT NOT NULL DEFAULT 0,
   is_active BOOLEAN NOT NULL DEFAULT true,
+  lock_type VARCHAR(6),
+  variant VARCHAR(5),
   UNIQUE(game_id, hex_q, hex_r, slot)
 );
 CREATE INDEX cells_game_id_is_active_idx ON cells(game_id, is_active);
@@ -89,3 +93,12 @@ CREATE TABLE user_word_history (
   created_at TIMESTAMP(3) NOT NULL DEFAULT now()
 );
 CREATE INDEX user_word_history_user_id_points_idx ON user_word_history(user_id, points DESC);
+
+CREATE TABLE campaign_levels (
+  level INT PRIMARY KEY,
+  hex_count INT NOT NULL,
+  min_word_length INT NOT NULL DEFAULT 2,
+  target_score INT NOT NULL,
+  color_mode BOOLEAN NOT NULL DEFAULT false,
+  locked_ratio REAL NOT NULL DEFAULT 0
+);

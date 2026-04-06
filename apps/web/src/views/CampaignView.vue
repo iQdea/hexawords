@@ -1,15 +1,23 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue';
-import { useRouter } from 'vue-router';
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
 import { useGameStore } from '@/stores/game';
 import { useApi } from '@/composables/useApi';
-import { CAMPAIGN_LEVELS } from '@hexawords/types';
 import GameBoard from '@/components/game/GameBoard.vue';
 
+interface CampaignLevel {
+  level: number;
+  hex_count: number;
+  min_word_length: number;
+  target_score: number;
+}
+
 const router = useRouter();
+const route = useRoute();
 const game = useGameStore();
 const api = useApi();
 const loading = ref(false);
+const campaignLevels = ref<CampaignLevel[]>([]);
 const completedLevels = ref(new Set<number>());
 const maxUnlocked = computed(() => {
   if (completedLevels.value.size === 0) return 1;
@@ -20,14 +28,38 @@ const maxUnlocked = computed(() => {
   return max + 1;
 });
 
-onMounted(async () => {
+const totalLevels = computed(() => campaignLevels.value.length);
+const hasPrev = computed(() => game.level !== null && game.level > 1);
+const hasNext = computed(() => {
+  if (game.level === null || game.level >= totalLevels.value) return false;
+  // If current level just finished, next is unlocked
+  if (game.status === 'finished') return true;
+  const next = game.level + 1;
+  return next <= maxUnlocked.value || completedLevels.value.has(next);
+});
+
+async function loadProgress() {
   try {
-    const progress = await api.get<{ completedLevels: Array<{ level: number; score: number }>; activeGame: { id: string; level: number; score: number } | null }>('/games/campaign/progress');
-    for (const l of progress.completedLevels) {
-      completedLevels.value.add(l.level);
-    }
+    const levels = await api.get<CampaignLevel[]>('/games/campaign/levels');
+    const progress = await api.get<{ completedLevels: Array<{ level: number; score: number }> }>('/games/campaign/progress');
+    campaignLevels.value = levels;
+    completedLevels.value = new Set(progress.completedLevels.map(l => l.level));
   } catch {
     // Not authenticated or no progress
+  }
+}
+
+onMounted(async () => {
+  await loadProgress();
+
+  // Restore game from URL query
+  const levelParam = Number(route.query.level);
+  if (levelParam > 0 && !game.gameId) {
+    if (levelParam <= maxUnlocked.value || completedLevels.value.has(levelParam)) {
+      await startLevel(levelParam);
+    } else {
+      router.replace({ query: {} });
+    }
   }
 });
 
@@ -37,6 +69,27 @@ async function startLevel(level: number) {
   loading.value = true;
   try {
     await game.startGame('campaign', undefined, level);
+    router.replace({ query: { level: String(level) } });
+  } finally {
+    loading.value = false;
+  }
+}
+
+function goToLevelList() {
+  game.resetGame();
+  router.replace({ query: {} });
+  loadProgress();
+}
+
+async function goToLevel(level: number) {
+  if (level < 1 || level > totalLevels.value) return;
+  // If current level just finished, allow next
+  const justUnlocked = game.status === 'finished' && game.level !== null && level === game.level + 1;
+  if (!justUnlocked && level > maxUnlocked.value && !completedLevels.value.has(level)) return;
+  loading.value = true;
+  try {
+    await game.startGame('campaign', undefined, level);
+    router.replace({ query: { level: String(level) } });
   } finally {
     loading.value = false;
   }
@@ -62,11 +115,11 @@ function formatScore(n: number): string {
       <div class="picker">
       <button class="btn-back" @click="router.push('/')">&#8592; На главную</button>
       <h2>Кампания</h2>
-      <p class="subtitle">31 уровень с нарастающей сложностью</p>
+      <p class="subtitle">{{ campaignLevels.length }} уровней с нарастающей сложностью</p>
 
       <div class="level-grid">
         <button
-          v-for="lvl in CAMPAIGN_LEVELS"
+          v-for="lvl in campaignLevels"
           :key="lvl.level"
           class="level-btn"
           :class="{
@@ -79,14 +132,22 @@ function formatScore(n: number): string {
           <span v-if="lvl.level > maxUnlocked" class="level-lock">&#x1F512;</span>
           <span v-else-if="completedLevels.has(lvl.level)" class="level-check">&#x2713;</span>
           <span class="level-num">{{ lvl.level }}</span>
-          <span class="level-meta">{{ gridLabel(lvl.hexCount) }} / {{ formatScore(lvl.targetScore) }}</span>
+          <span class="level-meta">{{ gridLabel(lvl.hex_count) }} / {{ formatScore(lvl.target_score) }}</span>
         </button>
       </div>
       </div>
     </template>
 
     <template v-else>
-      <GameBoard />
+      <GameBoard @next-level="hasNext && goToLevel(game.level! + 1)" @to-level-list="goToLevelList()">
+        <template #nav>
+          <div class="level-nav">
+            <button v-if="hasPrev" class="nav-btn" @click="goToLevel(game.level! - 1)">&#8592; Ур. {{ game.level! - 1 }}</button>
+            <button class="nav-btn" @click="goToLevelList()">Уровни</button>
+            <button v-if="hasNext" class="nav-btn" @click="goToLevel(game.level! + 1)">Ур. {{ game.level! + 1 }} &#8594;</button>
+          </div>
+        </template>
+      </GameBoard>
     </template>
   </div>
 </template>
@@ -195,5 +256,30 @@ h2 {
   font-size: 0.55rem;
   color: #999;
   text-transform: uppercase;
+}
+
+.level-nav {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  margin-bottom: 0.5rem;
+}
+
+.nav-btn {
+  background: rgba(255,255,255,0.75);
+  border: 1px solid rgba(255,255,255,0.4);
+  border-radius: 8px;
+  padding: 0.3rem 0.8rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: #555;
+  backdrop-filter: blur(4px);
+  transition: all 0.15s;
+}
+
+.nav-btn:hover {
+  background: rgba(255,255,255,0.95);
+  border-color: #1976d2;
+  color: #1976d2;
 }
 </style>

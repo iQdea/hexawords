@@ -19,7 +19,7 @@ export class DictionaryService implements OnModuleInit {
 
   async onModuleInit() {
     const { rows } = await this.pool.query<{ word: string }>(
-      'SELECT word FROM words WHERE len >= 3',
+      'SELECT word FROM words WHERE len >= 2',
     );
     for (const { word } of rows) {
       this.wordSet.add(word);
@@ -28,7 +28,7 @@ export class DictionaryService implements OnModuleInit {
   }
 
   async isValidWord(word: string): Promise<boolean> {
-    if (word.length < 3) return false;
+    if (word.length < 2) return false;
     const lower = word.toLowerCase();
 
     if (this.wordSet.has(lower)) return true;
@@ -45,6 +45,10 @@ export class DictionaryService implements OnModuleInit {
 
   get wordCount(): number {
     return this.wordSet.size;
+  }
+
+  get words(): string[] {
+    return [...this.wordSet];
   }
 
   async getFreq(word: string): Promise<number> {

@@ -10,37 +10,69 @@ import type {
 const SOCKET_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
 let socket: Socket | null = null;
+let currentUserId = '';
 const connected = ref(false);
 
-function getSocket(): Socket {
+function ensureSocket(): Socket {
+  const userId = getUserId();
+
+  if (socket && currentUserId !== userId) {
+    socket.disconnect();
+    socket = null;
+  }
+
   if (!socket) {
+    currentUserId = userId;
     socket = io(SOCKET_URL, {
       transports: ['websocket'],
-      query: { userId: getUserId() },
+      query: { userId },
       autoConnect: false,
     });
-
     socket.on('connect', () => { connected.value = true; });
     socket.on('disconnect', () => { connected.value = false; });
   }
   return socket;
 }
 
-function on<T>(s: Socket, event: string, cb: (data: T) => void) {
-  s.on(event, cb);
-  onUnmounted(() => s.off(event, cb));
-}
-
 export function useSocket() {
-  const s = getSocket();
+  function connect() {
+    const s = ensureSocket();
+    if (!s.connected) s.connect();
+  }
+
+  function disconnect() {
+    socket?.disconnect();
+  }
+
+  function joinGame(gameId: string) {
+    ensureSocket().emit('game:join', { gameId });
+  }
+
+  function onCellsRespawned(cb: (data: CellsRespawnedEvent) => void) {
+    const s = ensureSocket();
+    s.on('cell:respawned', cb);
+    onUnmounted(() => s.off('cell:respawned', cb));
+  }
+
+  function onScoreUpdate(cb: (data: ScoreUpdateEvent) => void) {
+    const s = ensureSocket();
+    s.on('score:update', cb);
+    onUnmounted(() => s.off('score:update', cb));
+  }
+
+  function onGameFinished(cb: (data: GameFinishedEvent) => void) {
+    const s = ensureSocket();
+    s.on('game:finished', cb);
+    onUnmounted(() => s.off('game:finished', cb));
+  }
 
   return {
     connected,
-    connect: () => { if (!s.connected) s.connect(); },
-    disconnect: () => { if (s.connected) s.disconnect(); },
-    joinGame: (gameId: string) => { s.emit('game:join', { gameId }); },
-    onCellsRespawned: (cb: (data: CellsRespawnedEvent) => void) => on(s, 'cell:respawned', cb),
-    onScoreUpdate: (cb: (data: ScoreUpdateEvent) => void) => on(s, 'score:update', cb),
-    onGameFinished: (cb: (data: GameFinishedEvent) => void) => on(s, 'game:finished', cb),
+    connect,
+    disconnect,
+    joinGame,
+    onCellsRespawned,
+    onScoreUpdate,
+    onGameFinished,
   };
 }
