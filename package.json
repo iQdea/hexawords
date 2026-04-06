@@ -16,6 +16,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.10",
+    "puppeteer": "24.40.0",
     "turbo": "^2.5.0",
     "typescript": "^5.8.0"
   },

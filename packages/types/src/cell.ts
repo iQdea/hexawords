@@ -3,10 +3,13 @@ export interface AxialCoord {
   r: number;
 }
 
+export type HexType = 'full' | 'edge3' | 'edge4';
+
 /** A hexagon on the game field, containing multiple letter slots. */
 export interface HexagonDTO {
   q: number;
   r: number;
+  hexType: HexType;
   cells: CellDTO[];
 }
 

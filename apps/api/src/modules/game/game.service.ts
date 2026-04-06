@@ -103,6 +103,7 @@ export class GameService {
     let minWordLength = 2;
     let colorMode = false;
     let lockedRatio = 0;
+    let edgeHexCount = 0;
 
     if (mode === GameModeEnum.CAMPAIGN) {
       const campaignLevel = await this.getCampaignLevel(level!);
@@ -110,6 +111,7 @@ export class GameService {
       minWordLength = campaignLevel.min_word_length;
       colorMode = campaignLevel.color_mode;
       lockedRatio = campaignLevel.locked_ratio;
+      edgeHexCount = campaignLevel.edge_hex_count;
     } else {
       if (!complexity) throw new BadRequestException('Complexity required for single mode');
       hexCount = COMPLEXITY_HEX_COUNT[complexity];
@@ -139,33 +141,30 @@ export class GameService {
 
     // Generate new game
     const engine = this.createEngine();
-    const state = engine.createInitialState({ mode, hexCount, cellsPerHex: CELLS_PER_HEX });
-    const hexCoords = gridForSize(hexCount);
+    const state = engine.createInitialState({ mode, hexCount, cellsPerHex: CELLS_PER_HEX, edgeHexCount });
 
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
 
       const { rows: [game] } = await client.query<GameRow>(
-        `INSERT INTO games (user_id, mode, complexity, level, hex_count, cells_per_hex, min_word_length, color_mode)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-        [userId, modeUpper, complexity ? complexity.toString().toUpperCase() : null, level ?? null, hexCount, CELLS_PER_HEX, minWordLength, colorMode],
+        `INSERT INTO games (user_id, mode, complexity, level, hex_count, cells_per_hex, min_word_length, color_mode, edge_hex_count)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+        [userId, modeUpper, complexity ? complexity.toString().toUpperCase() : null, level ?? null, hexCount, CELLS_PER_HEX, minWordLength, colorMode, edgeHexCount],
       );
 
-      // Build cell values
+      // Build cell values from all hexagons (core + edge)
       const cellValues: (string | number | boolean | null)[] = [];
       const placeholders: string[] = [];
       let idx = 1;
-      for (const coord of hexCoords) {
-        const hexCells = state.hexagons.get(`${coord.q},${coord.r}`);
-        if (!hexCells) continue;
+      for (const [, hexCells] of state.hexagons) {
         for (const cell of hexCells) {
           const variant = colorMode ? (Math.random() < 0.7 ? 'light' : 'dark') : null;
           const lockType = lockedRatio > 0 && Math.random() < lockedRatio
             ? pickLockType(cell.slot)
             : null;
           placeholders.push(`($${idx}, $${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4}, $${idx + 5}, $${idx + 6}, $${idx + 7})`);
-          cellValues.push(game.id, coord.q, coord.r, cell.slot, cell.char, cell.points, variant, lockType);
+          cellValues.push(game.id, cell.hexQ, cell.hexR, cell.slot, cell.char, cell.points, variant, lockType);
           idx += 8;
         }
       }
@@ -517,7 +516,8 @@ export class GameService {
 
     const hexagons = [...hexMap.entries()].map(([key, hCells]) => {
       const [q, r] = key.split(',').map(Number);
-      return { q, r, cells: hCells.sort((a: { slot: number }, b: { slot: number }) => a.slot - b.slot) };
+      const hexType = hCells.length === 7 ? 'full' : hCells.length === 4 ? 'edge4' : hCells.length === 3 ? 'edge3' : 'full';
+      return { q, r, hexType, cells: hCells.sort((a: { slot: number }, b: { slot: number }) => a.slot - b.slot) };
     });
 
     return {

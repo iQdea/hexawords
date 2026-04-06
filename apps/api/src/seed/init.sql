@@ -39,6 +39,7 @@ CREATE TABLE games (
   cells_per_hex INT NOT NULL DEFAULT 7,
   min_word_length INT NOT NULL DEFAULT 2,
   color_mode BOOLEAN NOT NULL DEFAULT false,
+  edge_hex_count INT NOT NULL DEFAULT 0,
   created_at TIMESTAMP(3) NOT NULL DEFAULT now(),
   finished_at TIMESTAMP(3)
 );
@@ -100,5 +101,7 @@ CREATE TABLE campaign_levels (
   min_word_length INT NOT NULL DEFAULT 2,
   target_score INT NOT NULL,
   color_mode BOOLEAN NOT NULL DEFAULT false,
-  locked_ratio REAL NOT NULL DEFAULT 0
+  locked_ratio REAL NOT NULL DEFAULT 0,
+  edge_hex_count INT NOT NULL DEFAULT 0,
+  edge_hex_type VARCHAR(5) NOT NULL DEFAULT 'edge4'
 );

@@ -4,6 +4,14 @@ import { areAdjacent } from '@hexawords/hex-math';
 import type { CellDTO, HexagonDTO, WordPathStep } from '@hexawords/types';
 import { useApi } from '@/composables/useApi';
 
+function findCell(hex: HexagonDTO | undefined, slot: number): CellDTO | undefined {
+  return hex?.cells.find(c => c.slot === slot);
+}
+
+function findCellIndex(hex: HexagonDTO | undefined, slot: number): number {
+  return hex?.cells.findIndex(c => c.slot === slot) ?? -1;
+}
+
 interface GameResponse {
   id: string;
   mode: string;
@@ -43,7 +51,7 @@ export const useGameStore = defineStore('game', () => {
     selectedPath.value
       .map(step => {
         const hex = hexagons.value.find(h => h.q === step.hexQ && h.r === step.hexR);
-        return hex?.cells[step.slot]?.char ?? '';
+        return findCell(hex, step.slot)?.char ?? '';
       })
       .join('')
   );
@@ -109,7 +117,7 @@ export const useGameStore = defineStore('game', () => {
 
     // Check cell is active
     const hex = hexagons.value.find(h => h.q === hexQ && h.r === hexR);
-    const cell = hex?.cells[slot];
+    const cell = findCell(hex, slot);
     if (!cell || !cell.isActive || cell.lockType) return;
 
     selectedPath.value = [...selectedPath.value, { hexQ, hexR, slot }];
@@ -152,7 +160,7 @@ export const useGameStore = defineStore('game', () => {
         if (result.consumedCells) {
           const allDark = result.consumedCells.every(step => {
             const hex = hexagons.value.find(h => h.q === step.hexQ && h.r === step.hexR);
-            return hex?.cells[step.slot]?.variant === 'dark';
+            return findCell(hex, step.slot)?.variant === 'dark';
           });
           if (allDark && result.consumedCells.length >= 2) {
             darkCombo.value = [...result.consumedCells];
@@ -161,8 +169,9 @@ export const useGameStore = defineStore('game', () => {
           // Mark consumed cells as inactive
           for (const step of result.consumedCells) {
             const hex = hexagons.value.find(h => h.q === step.hexQ && h.r === step.hexR);
-            if (hex?.cells[step.slot]) {
-              hex!.cells[step.slot]!.isActive = false;
+            const ci = findCellIndex(hex, step.slot);
+            if (hex && ci >= 0) {
+              hex.cells[ci].isActive = false;
             }
           }
         }
@@ -171,8 +180,9 @@ export const useGameStore = defineStore('game', () => {
         if (result.unlockedCells) {
           for (const step of result.unlockedCells) {
             const hex = hexagons.value.find(h => h.q === step.hexQ && h.r === step.hexR);
-            if (hex?.cells[step.slot]) {
-              hex!.cells[step.slot]!.lockType = null;
+            const li = findCellIndex(hex, step.slot);
+            if (hex && li >= 0) {
+              hex.cells[li].lockType = null;
             }
           }
         }
@@ -190,8 +200,9 @@ export const useGameStore = defineStore('game', () => {
   function handleCellRespawn(cells: CellDTO[]) {
     for (const cell of cells) {
       const hex = hexagons.value.find(h => h.q === cell.hexQ && h.r === cell.hexR);
-      if (hex?.cells[cell.slot]) {
-        hex!.cells[cell.slot] = { ...cell, isActive: true };
+      const ri = findCellIndex(hex, cell.slot);
+      if (hex && ri >= 0) {
+        hex.cells[ri] = { ...cell, isActive: true };
       }
     }
   }

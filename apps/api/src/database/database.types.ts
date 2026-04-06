@@ -33,6 +33,8 @@ export interface CampaignLevelRow {
   target_score: number;
   color_mode: boolean;
   locked_ratio: number;
+  edge_hex_count: number;
+  edge_hex_type: string;
 }
 
 export interface UserRow {
@@ -71,6 +73,7 @@ export interface GameRow {
   cells_per_hex: number;
   min_word_length: number;
   color_mode: boolean;
+  edge_hex_count: number;
   created_at: Date;
   finished_at: Date | null;
 }

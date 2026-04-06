@@ -1,11 +1,11 @@
 import type { CellState, GameConfig, WordResult, WordPathStep } from '@hexawords/types';
-import { areAdjacent, gridForSize } from '@hexawords/hex-math';
+import { areAdjacent, gridForSize, generateFieldLayout, edgeHexSlots } from '@hexawords/hex-math';
 import type { WordValidator, LetterGenerator } from './interfaces';
 import { calculateWordScore } from './scoring';
-import { generateBalancedHex, shouldRespawnVowel, RUSSIAN_VOWELS, WeightedLetterGenerator } from './letters';
+import { generateBalancedHex, shouldRespawnVowel, RUSSIAN_VOWELS, WeightedLetterGenerator, TARGET_VOWELS_PER_HEX } from './letters';
 
 export interface GameState {
-  /** Cells grouped by hexagon key "q,r" → array of CellState (one per slot). */
+  /** Cells grouped by hexagon key "q,r" → array of CellState. */
   hexagons: Map<string, CellState[]>;
   score: number;
   wordCount: number;
@@ -14,7 +14,6 @@ export interface GameState {
 }
 
 export interface WordSubmission {
-  /** Ordered path: each step = which hexagon (hexQ,hexR) + which slot within it. */
   path: WordPathStep[];
 }
 
@@ -28,30 +27,63 @@ function hexKey(q: number, r: number): string {
   return `${q},${r}`;
 }
 
+/** Find cell by slot number (safe for edge hexes with non-contiguous slots) */
+function getCell(cells: CellState[], slot: number): CellState | undefined {
+  return cells.find(c => c.slot === slot);
+}
+
 export class GameEngine {
   constructor(
     private wordValidator: WordValidator,
     private letterGenerator: LetterGenerator,
   ) {}
 
-  /** Creates the initial game state: N hexagons, each with cellsPerHex letters. */
   createInitialState(config: GameConfig): GameState {
-    const hexCoords = gridForSize(config.hexCount);
+    const edgeCount = config.edgeHexCount ?? 0;
     const hexagons = new Map<string, CellState[]>();
 
-    for (const coord of hexCoords) {
-      const balanced = generateBalancedHex(config.cellsPerHex);
-      const cells: CellState[] = balanced.map((letter, slot) => ({
-        hexQ: coord.q,
-        hexR: coord.r,
-        slot,
-        char: letter.char,
-        points: letter.points,
-        isActive: true,
-        lockType: null,
-        variant: null,
-      }));
-      hexagons.set(hexKey(coord.q, coord.r), cells);
+    if (edgeCount > 0) {
+      // Mixed layout: full + edge hexagons
+      const layout = generateFieldLayout(config.hexCount, edgeCount);
+
+      for (const hex of layout) {
+        if (hex.type === 'full') {
+          const balanced = generateBalancedHex(config.cellsPerHex);
+          const cells: CellState[] = balanced.map((letter, slot) => ({
+            hexQ: hex.coord.q, hexR: hex.coord.r, slot,
+            char: letter.char, points: letter.points,
+            isActive: true, lockType: null, variant: null,
+          }));
+          hexagons.set(hexKey(hex.coord.q, hex.coord.r), cells);
+        } else {
+          // Variant A (below) = slots 6,1,2 (lower half of hex)
+          // Variant B (above) = slots 5,4,3 (upper half of hex)
+          // facing 5 = edge is below core → variant A
+          // facing 2 = edge is above core → variant B
+          const isBelow = hex.facing === 5 || hex.facing === 0 || hex.facing === 4;
+          const slots = isBelow ? [6, 1, 2] : [5, 4, 3];
+          const vowelTarget = Math.max(1, Math.round(slots.length * TARGET_VOWELS_PER_HEX / 7));
+          const balanced = generateBalancedHex(slots.length, vowelTarget);
+          const cells: CellState[] = balanced.map((letter, i) => ({
+            hexQ: hex.coord.q, hexR: hex.coord.r, slot: slots[i],
+            char: letter.char, points: letter.points,
+            isActive: true, lockType: null, variant: null,
+          }));
+          hexagons.set(hexKey(hex.coord.q, hex.coord.r), cells);
+        }
+      }
+    } else {
+      // Standard layout: only full hexagons
+      const hexCoords = gridForSize(config.hexCount);
+      for (const coord of hexCoords) {
+        const balanced = generateBalancedHex(config.cellsPerHex);
+        const cells: CellState[] = balanced.map((letter, slot) => ({
+          hexQ: coord.q, hexR: coord.r, slot,
+          char: letter.char, points: letter.points,
+          isActive: true, lockType: null, variant: null,
+        }));
+        hexagons.set(hexKey(coord.q, coord.r), cells);
+      }
     }
 
     return {
@@ -66,12 +98,10 @@ export class GameEngine {
   async submitWord(state: GameState, submission: WordSubmission, minWordLength = 2): Promise<SubmitResult> {
     const { path } = submission;
 
-    // 1. Minimum length
     if (path.length < minWordLength) {
       return this.invalid(state, path, 'too_short');
     }
 
-    // 2. No duplicate cells (same hex + same slot)
     const usedCells = new Set<string>();
     for (const step of path) {
       const cellKey = `${step.hexQ},${step.hexR},${step.slot}`;
@@ -81,12 +111,9 @@ export class GameEngine {
       usedCells.add(cellKey);
     }
 
-    // 3. Consecutive steps must be in DIFFERENT adjacent hexagons
-    //    (can revisit a hex after going through another one)
     for (let i = 1; i < path.length; i++) {
       const prev = { q: path[i - 1].hexQ, r: path[i - 1].hexR };
       const curr = { q: path[i].hexQ, r: path[i].hexR };
-      // Can't stay in the same hexagon for consecutive picks
       if (prev.q === curr.q && prev.r === curr.r) {
         return this.invalid(state, path, 'same_hexagon');
       }
@@ -95,32 +122,25 @@ export class GameEngine {
       }
     }
 
-    // 4. Extract word
     const word = this.extractWord(state, path);
 
-    // 5. Dictionary check
     const isValid = await this.wordValidator.isValid(word);
     if (!isValid) {
       return this.invalid(state, path, 'not_in_dictionary');
     }
 
-    // 6. Check if already found in this game (repeat = reduced score)
     const isRepeat = state.wordsFound.has(word);
-
-    // 7. Get word frequency for rarity bonus
     const wordFreq = await this.wordValidator.getFreq(word);
 
-    // 8. Calculate score (repeats get 25% of normal)
     const cellPoints = path.map(step => {
       const hex = state.hexagons.get(hexKey(step.hexQ, step.hexR));
-      return hex?.[step.slot]?.points ?? 0;
+      return hex ? (getCell(hex, step.slot)?.points ?? 0) : 0;
     });
     let points = calculateWordScore(cellPoints, state.wordCount, word.length, wordFreq);
     if (isRepeat) {
       points = Math.max(1, Math.round(points * 0.25));
     }
 
-    // 8. Consume cells and generate replacements
     const consumedCells = [...path];
     const newCells: CellState[] = [];
 
@@ -133,15 +153,13 @@ export class GameEngine {
       const hex = state.hexagons.get(key);
       if (!hex) continue;
 
-      // Count current vowels in this hexagon (excluding the consumed cell)
       const vowelCount = hex.filter(
-        (c, i) => i !== step.slot && c.isActive && RUSSIAN_VOWELS.has(c.char)
+        c => c.slot !== step.slot && c.isActive && RUSSIAN_VOWELS.has(c.char)
       ).length;
       const activeCount = hex.filter(
-        (c, i) => i !== step.slot && c.isActive
+        c => c.slot !== step.slot && c.isActive
       ).length;
 
-      // Decide vowel or consonant based on current balance
       const needVowel = shouldRespawnVowel(vowelCount, activeCount);
       const { char, points: newPts } = needVowel
         ? gen.generateVowel()
@@ -157,11 +175,13 @@ export class GameEngine {
         lockType: null,
         variant: null,
       };
-      hex[step.slot] = newCell;
+
+      // Update cell in hex by slot (not by array index)
+      const idx = hex.findIndex(c => c.slot === step.slot);
+      if (idx >= 0) hex[idx] = newCell;
       newCells.push(newCell);
     }
 
-    // 9. Update game state
     state.score += points;
     state.wordCount++;
     state.wordsFound.add(word);
@@ -184,7 +204,7 @@ export class GameEngine {
     return path
       .map(step => {
         const hex = state.hexagons.get(hexKey(step.hexQ, step.hexR));
-        return hex?.[step.slot]?.char ?? '';
+        return hex ? (getCell(hex, step.slot)?.char ?? '') : '';
       })
       .join('');
   }

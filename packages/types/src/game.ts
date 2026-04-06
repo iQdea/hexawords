@@ -31,9 +31,11 @@ export interface GameConfig {
   mode: GameMode;
   complexity?: GameComplexity;
   campaignLevel?: number;
-  hexCount: number;        // number of hexagons on the field
-  cellsPerHex: number;     // letters per hexagon (usually 7)
+  hexCount: number;        // number of full hexagons on the field
+  cellsPerHex: number;     // letters per full hexagon (usually 7)
   minWordLength?: number;  // minimum word length (default 2)
+  edgeHexCount?: number;   // number of edge half-hexagons (default 0)
+  edgeHexType?: 'edge3' | 'edge4'; // edge hex type (default 'edge4')
 }
 
 export interface GameDTO {
